@@ -104,6 +104,8 @@ func (s *Server) routes() {
 	s.handle("POST /v1/admin/meters/{id}/assign", s.adminAssignMeter)
 	s.handle("PATCH /v1/admin/meters/{id}", s.adminMeterStatus)
 	s.handle("GET /v1/admin/meters/{id}/readings", s.adminReadings)
+	s.handle("GET /v1/admin/meters/{id}/commands", s.adminMeterCommands)
+	s.handle("POST /v1/admin/meters/{id}/commands", s.adminSendCommand)
 	s.handle("GET /v1/admin/transfers", s.adminTransfers)
 	s.handle("POST /v1/admin/transfers/{id}/decision", s.adminDecideTransfer)
 	s.handle("GET /v1/admin/properties", s.adminProperties)
@@ -335,10 +337,10 @@ func (s *Server) quote(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var in struct {
-		ProviderCode string  `json:"provider_code"`
+		ProviderCode string     `json:"provider_code"`
 		MeterID      *uuid.UUID `json:"meter_id"`
-		AmountKobo   int64   `json:"amount_kobo"`
-		Kwh          float64 `json:"kwh"`
+		AmountKobo   int64      `json:"amount_kobo"`
+		Kwh          float64    `json:"kwh"`
 	}
 	if err := decode(r, &in); err != nil {
 		return err

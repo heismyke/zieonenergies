@@ -144,4 +144,3 @@ func (s *Service) seedRed(ctx context.Context, t Tenant, users []uuid.UUID) erro
 		return nil
 	})
 }
-

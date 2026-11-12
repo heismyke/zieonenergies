@@ -482,7 +482,7 @@ func TestRBACAndAuth(t *testing.T) {
 	c2 := e.must(e.do("POST", "/v1/auth/register", "", map[string]string{"email": "r@zen.test", "password": "customer-pass-1"}, tenantHdr(p.Slug)), 201)
 	rt := c2.str("refresh_token")
 	n := e.must(e.do("POST", "/v1/auth/refresh", "", map[string]string{"refresh_token": rt}), 200)
-	e.must(e.do("POST", "/v1/auth/refresh", "", map[string]string{"refresh_token": rt}), 401) // reuse
+	e.must(e.do("POST", "/v1/auth/refresh", "", map[string]string{"refresh_token": rt}), 401)                     // reuse
 	e.must(e.do("POST", "/v1/auth/refresh", "", map[string]string{"refresh_token": n.str("refresh_token")}), 401) // family revoked
 
 	// Suspended tenant: no logins, existing tokens stop working.

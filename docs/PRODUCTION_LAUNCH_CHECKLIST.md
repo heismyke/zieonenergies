@@ -8,6 +8,7 @@
 - [x] Vending state machine, idempotency, concurrency safety, refunds, reconciliation, immutable ledger
 - [x] Benefits engine with caps and a partner-funded pool
 - [x] Signed device telemetry protocol (server side), low-balance, offline and tamper handling
+- [x] MQTT device gateway: TLS 8883 and wss `/mqtt`, signed commands with acks, per-device ACLs (server side, tested with the reference client)
 - [x] Signed outbound webhooks with retries and SSRF protection
 - [x] Web and mobile apps wired to the API, with runtime white-label theming
 - [x] Containerised and deployed behind TLS on the pilot host (sandbox)
@@ -26,7 +27,8 @@
 - [ ] Dedicated infrastructure (not a shared host), managed Postgres with PITR, two or more API instances, shared rate limiter
 - [ ] Secrets in a KMS or Vault, with a dual-key JWT verification rotation procedure
 - [ ] Load test at 10× expected peak, and a chaos test of vending provider timeouts
-- [ ] Firmware integrated and field-tested: telemetry, token acceptance, downlink
+- [ ] Firmware integrated and field-tested against `docs/MQTT_DEVICE_PROTOCOL.md`: telemetry, `credit_token` via the STS module, relay, offline buffering
+- [ ] Dedicated broker capacity test (target 10k concurrent meters), and a move of MQTT TLS to its own certificate and hostname
 - [ ] Penetration test by a third party
 - [ ] SLOs agreed with partners and on-call rota staffed
 

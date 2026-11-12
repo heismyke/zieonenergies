@@ -10,6 +10,8 @@ services:
       DATABASE_URL: postgres://zieon:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/zieon?sslmode=disable
       PORT: "8080"
       TRUST_PROXY_HEADERS: "true"
+      # Returned to the platform at meter registration for device provisioning.
+      MQTT_PUBLIC_URLS: ssl://zieon-api.198.199.65.142.sslip.io:8883,wss://zieon-api.198.199.65.142.sslip.io/mqtt
     depends_on:
       db:
         condition: service_healthy
@@ -27,6 +29,49 @@ services:
       resources:
         limits:
           memory: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # MQTT device gateway (same image, `api mqtt`). Kept separate so API
+  # deploys do not drop meter connections.
+  mqtt:
+    build: .
+    command: ["mqtt"]
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      DATABASE_URL: postgres://zieon:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/zieon?sslmode=disable
+      MQTT_TLS_ADDR: ":8883"
+      MQTT_WS_ADDR: ":8083"
+      # Reuse the certificate Caddy obtains and renews for the API hostname.
+      # The glob tolerates Caddy switching ACME issuer directories.
+      MQTT_TLS_CERT_FILE: /caddy-data/caddy/certificates/*/zieon-api.198.199.65.142.sslip.io/zieon-api.198.199.65.142.sslip.io.crt
+      MQTT_TLS_KEY_FILE: /caddy-data/caddy/certificates/*/zieon-api.198.199.65.142.sslip.io/zieon-api.198.199.65.142.sslip.io.key
+    # Caddy's key files are root-only (0600), so this container reads them as
+    # root; it is otherwise locked down: read-only FS, no capabilities.
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - caddy-data:/caddy-data:ro
+    ports:
+      - "8883:8883"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      default:
+      proxy:
+        aliases:
+          - zieon-mqtt
+    deploy:
+      resources:
+        limits:
+          memory: 128m
     logging:
       driver: json-file
       options:
@@ -59,6 +104,9 @@ services:
 
 volumes:
   pgdata:
+  caddy-data:
+    external: true
+    name: hixmastudio-proxy_caddy-data
 
 networks:
   proxy:

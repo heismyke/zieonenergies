@@ -142,33 +142,33 @@ type PurchaseInput struct {
 }
 
 type Purchase struct {
-	ID              uuid.UUID             `json:"id"`
-	Status          string                `json:"status"`
-	MeterID         uuid.UUID             `json:"meter_id"`
-	MeterNumber     string                `json:"meter_number"`
-	MeterLabel      string                `json:"meter_label"`
-	ProviderCode    string                `json:"provider_code"`
-	CustomerName    string                `json:"customer_name"`
-	PaymentMethod   string                `json:"payment_method"`
-	AmountKobo      int64                 `json:"amount_kobo"`
-	WalletKobo      int64                 `json:"wallet_kobo"`
-	RewardKobo      int64                 `json:"reward_kobo"`
-	ExternalKobo    int64                 `json:"external_kobo"`
-	FeeKobo         int64                 `json:"fee_kobo"`
-	VatKobo         int64                 `json:"vat_kobo"`
-	EnergyValueKobo int64                 `json:"energy_value_kobo"`
-	RateKoboPerKwh  int64                 `json:"rate_kobo_per_kwh"`
-	EnergyKwh       float64               `json:"energy_kwh"`
-	Route           string                `json:"route"`
-	Sandbox         bool                  `json:"sandbox"`
-	Token           *string               `json:"token"`
-	TokenStatus     *string               `json:"token_status"`
-	FailureReason   string                `json:"failure_reason,omitempty"`
-	RewardEarned    int64                 `json:"reward_earned_kobo"`
-	Payment         *PaymentInfo          `json:"payment,omitempty"`
-	CreatedAt       time.Time             `json:"created_at"`
-	VendedAt        *time.Time            `json:"vended_at"`
-	UserID          uuid.UUID             `json:"user_id"`
+	ID              uuid.UUID    `json:"id"`
+	Status          string       `json:"status"`
+	MeterID         uuid.UUID    `json:"meter_id"`
+	MeterNumber     string       `json:"meter_number"`
+	MeterLabel      string       `json:"meter_label"`
+	ProviderCode    string       `json:"provider_code"`
+	CustomerName    string       `json:"customer_name"`
+	PaymentMethod   string       `json:"payment_method"`
+	AmountKobo      int64        `json:"amount_kobo"`
+	WalletKobo      int64        `json:"wallet_kobo"`
+	RewardKobo      int64        `json:"reward_kobo"`
+	ExternalKobo    int64        `json:"external_kobo"`
+	FeeKobo         int64        `json:"fee_kobo"`
+	VatKobo         int64        `json:"vat_kobo"`
+	EnergyValueKobo int64        `json:"energy_value_kobo"`
+	RateKoboPerKwh  int64        `json:"rate_kobo_per_kwh"`
+	EnergyKwh       float64      `json:"energy_kwh"`
+	Route           string       `json:"route"`
+	Sandbox         bool         `json:"sandbox"`
+	Token           *string      `json:"token"`
+	TokenStatus     *string      `json:"token_status"`
+	FailureReason   string       `json:"failure_reason,omitempty"`
+	RewardEarned    int64        `json:"reward_earned_kobo"`
+	Payment         *PaymentInfo `json:"payment,omitempty"`
+	CreatedAt       time.Time    `json:"created_at"`
+	VendedAt        *time.Time   `json:"vended_at"`
+	UserID          uuid.UUID    `json:"user_id"`
 }
 
 type PaymentInfo struct {
@@ -395,13 +395,13 @@ func (s *Service) applyVendResult(ctx context.Context, tenant, txnID uuid.UUID, 
 }
 
 type vendRow struct {
-	id, tenant, user, meter            uuid.UUID
-	status, method                     string
-	amount, wallet, reward, external   int64
-	energyWh                           int64
-	sandbox                            bool
-	attempts                           int
-	updatedAt                          time.Time
+	id, tenant, user, meter          uuid.UUID
+	status, method                   string
+	amount, wallet, reward, external int64
+	energyWh                         int64
+	sandbox                          bool
+	attempts                         int
+	updatedAt                        time.Time
 }
 
 func lockVend(ctx context.Context, tx pgx.Tx, id uuid.UUID) (vendRow, error) {
@@ -937,7 +937,23 @@ func (s *Service) RedeemToken(ctx context.Context, p auth.Principal, meterID uui
 			return errf(http.StatusBadRequest, "invalid_token", "token is invalid for this meter")
 		}
 		out.EnergyKwh = WhToKwh(wh)
-		if sandbox {
+		if m.CommsMode == "mqtt" && m.Capabilities.RemoteCredit {
+			// Connected meter: the token is pushed as a signed command and only
+			// counts as delivered when the meter acknowledges executing it.
+			if status == "submitted" {
+				return errf(http.StatusConflict, "token_pending", "this token is already being sent to your meter")
+			}
+			plain := token
+			if _, err := enqueueCommand(ctx, tx, p.TenantID, meterID, "credit_token",
+				map[string]any{"token": plain, "token_id": id, "energy_kwh": WhToKwh(wh)}, &p.UserID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE energy_tokens SET status='submitted', submitted_at=now() WHERE id=$1`, id); err != nil {
+				return err
+			}
+			out.Status, out.Simulated = "submitted", false
+			out.Message = "Token sent to your meter. Your balance updates as soon as the meter confirms it."
+		} else if sandbox {
 			if _, err := s.confirmTokenDelivery(ctx, tx, p.TenantID, meterID, token); err != nil {
 				return err
 			}

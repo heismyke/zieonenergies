@@ -16,7 +16,8 @@ Frontends:
 ## Results (2026-11-12, macOS arm64, Go 1.26.3, PostgreSQL 17)
 | Suite | Tests | Result |
 |---|---|---|
-| `internal/httpapi` (end to end over HTTP + real PostgreSQL, `-race`) | 11 | **PASS** (222 s) |
+| `internal/httpapi` (end to end over HTTP + real PostgreSQL, `-race`) | 12 | **PASS** (241 s) |
+| `internal/mqttgw` (TLS certificate hot reload) | 1 | **PASS** |
 | `internal/app` (pricing, state machine, branding validation) | 3 | **PASS** |
 | `internal/auth` (JWT tamper, expiry, wrong key; bcrypt) | 2 | **PASS** |
 | `internal/secure` (key rotation, tamper detection, webhook signature and replay window) | 3 | **PASS** |
@@ -49,6 +50,7 @@ Frontends:
 | Offline meter detection, low balance, auto top-up, tamper | `TestDeviceTelemetry` |
 | Ledger immutability and balance/ledger agreement | `TestLedgerIsAppendOnly` |
 | Partner SSO: single-use code, origin check, scopes, revocation, cross-tenant key | `TestPartnerSSOAndWebhooks` |
+| MQTT: bad, stale or mismatched credentials refused; forged payload dropped; cross-meter publish disconnects; cross-meter/wildcard subscribe refused; token credit via command, delivered only on `executed` ack; rejected ack returns the token; relay command; offline queue flushed on reconnect; online/offline tracking | `TestMQTTDeviceGateway` |
 | Webhook signing, SSRF refusal, retry after a 500 | `TestPartnerSSOAndWebhooks` |
 | Mobile retry-after-refresh reuses the Idempotency-Key | `zenerlink-mobile/test/api_test.dart` |
 

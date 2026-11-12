@@ -70,10 +70,10 @@ Legend:
 | Registration, unique serials, tenant assignment | IMPLEMENTED | `RegisterMeter` and `AssignMeterToTenant`. Zieon serials are globally unique. External meters are unique per tenant. | — |
 | Customer and property links, activation and deactivation | IMPLEMENTED | `meter_links`, `properties`, `SetMeterStatus`. | — |
 | Ownership transfer with approval and audit | IMPLEMENTED | `meter_transfers`. Only one pending transfer per meter. Admin decision is audited. | — |
-| Device authentication | IMPLEMENTED (protocol) / BLOCKED (firmware) | HMAC-signed HTTP telemetry with a nonce and a ±5-minute window. **No firmware implements it yet.** | High |
+| Device authentication | IMPLEMENTED (server) / BLOCKED (firmware) | Signed HTTP telemetry **and an MQTT gateway**. The gateway uses a time-bound HMAC password plus signed envelopes in both directions, and per-device topic ACLs (`docs/MQTT_DEVICE_PROTOCOL.md`, `TestMQTTDeviceGateway`). **No firmware implements it yet.** | High |
 | Connectivity, readings, consumption, firmware version | IMPLEMENTED (server side) | Offline detection, register-based consumption, firmware field. Data appears only once devices report. | — |
 | Tamper and abnormal alerts | IMPLEMENTED (server side) | `meter_alerts` plus webhook. Depends on the meter reporting a tamper condition. | — |
-| Remote credit or relay commands to meters | BLOCKED | No device command channel exists (needs the hardware protocol: MQTT/GSM downlink). | High |
+| Remote credit or relay commands to meters | IMPLEMENTED (server) / BLOCKED (firmware) | `device_commands` queue delivered over MQTT. Covers `credit_token`, `relay`, `sync` and `ping`, with at-least-once delivery and an idempotent command id. A token counts as delivered only on the device's signed `executed` ack. Needs firmware. | High |
 
 ### Vending
 | Requirement | Status | Evidence / gap | Risk |

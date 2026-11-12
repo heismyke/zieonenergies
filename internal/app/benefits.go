@@ -335,11 +335,11 @@ type RewardGrant struct {
 }
 
 type BenefitsSummary struct {
-	Enabled             bool          `json:"enabled"`
-	Tier                *Tier         `json:"tier"`
-	RewardBalanceKobo   int64         `json:"reward_balance_kobo"`
-	MonthlyCreditClaimed bool         `json:"monthly_credit_claimed"`
-	History             []RewardGrant `json:"history"`
+	Enabled              bool          `json:"enabled"`
+	Tier                 *Tier         `json:"tier"`
+	RewardBalanceKobo    int64         `json:"reward_balance_kobo"`
+	MonthlyCreditClaimed bool          `json:"monthly_credit_claimed"`
+	History              []RewardGrant `json:"history"`
 }
 
 func (s *Service) Benefits(ctx context.Context, p auth.Principal, t Tenant) (BenefitsSummary, error) {

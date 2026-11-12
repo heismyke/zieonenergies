@@ -4,6 +4,7 @@
 //	api migrate    apply migrations and exit
 //	api migrate-down  roll back the latest migration (development only)
 //	api seed-pilot    provision sandbox pilot tenants (non-production only)
+//	api mqtt          run only the MQTT device gateway (no HTTP, no workers)
 package main
 
 import (
@@ -22,6 +23,7 @@ import (
 	"github.com/heismyke/zieonenergies/internal/config"
 	"github.com/heismyke/zieonenergies/internal/db"
 	"github.com/heismyke/zieonenergies/internal/httpapi"
+	"github.com/heismyke/zieonenergies/internal/mqttgw"
 	"github.com/heismyke/zieonenergies/internal/payments"
 	"github.com/heismyke/zieonenergies/internal/secure"
 	"github.com/heismyke/zieonenergies/internal/vending"
@@ -81,9 +83,30 @@ func run(log *slog.Logger) error {
 			fmt.Println(l)
 		}
 		return err
+	case "mqtt":
+		if !cfg.MQTTEnabled() {
+			return errors.New("mqtt: set MQTT_TLS_ADDR, MQTT_WS_ADDR or MQTT_TCP_ADDR")
+		}
+		gw, err := mqttgw.New(svc, cfg, log)
+		if err != nil {
+			return err
+		}
+		return gw.Run(ctx)
 	case "serve":
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
+	}
+
+	if cfg.MQTTEnabled() {
+		gw, err := mqttgw.New(svc, cfg, log)
+		if err != nil {
+			return err
+		}
+		go func() {
+			if err := gw.Run(ctx); err != nil {
+				log.Error("mqtt gateway stopped", "err", err)
+			}
+		}()
 	}
 
 	if cfg.WorkersEnabled {

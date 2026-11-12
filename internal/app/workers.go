@@ -32,6 +32,7 @@ func (s *Service) RunWorkers(ctx context.Context) {
 		{"auto_topup", 30 * time.Second, s.RunAutoTopups},
 		{"meter_offline", time.Minute, s.DetectOfflineMeters},
 		{"expire_rewards", 10 * time.Minute, func(ctx context.Context) error { _, err := s.ExpireRewards(ctx); return err }},
+		{"expire_commands", time.Minute, s.ExpireCommands},
 		{"cleanup", time.Hour, s.Cleanup},
 	}
 	for _, j := range jobs {

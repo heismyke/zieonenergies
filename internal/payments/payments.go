@@ -14,11 +14,11 @@ import (
 )
 
 type Intent struct {
-	Reference  string
-	AmountKobo int64
-	Email      string
-	Method     string
-	Currency   string
+	Reference   string
+	AmountKobo  int64
+	Email       string
+	Method      string
+	Currency    string
 	CallbackURL string
 }
 
@@ -90,9 +90,9 @@ func (p *Paystack) Initialize(ctx context.Context, in Intent) (Session, error) {
 		"currency": in.Currency, "channels": channels, "callback_url": in.CallbackURL,
 	})
 	var out struct {
-		Status bool   `json:"status"`
+		Status  bool   `json:"status"`
 		Message string `json:"message"`
-		Data   struct {
+		Data    struct {
 			AuthorizationURL string `json:"authorization_url"`
 		} `json:"data"`
 	}

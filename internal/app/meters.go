@@ -52,13 +52,13 @@ type Meter struct {
 	// KwhReserve is the best available credit figure. BalanceSource says where
 	// it came from: "device" (last meter report) or "platform_ledger" (units
 	// delivered and shared through Zieon, without consumption data).
-	KwhReserve       float64  `json:"kwh_reserve"`
-	BalanceSource    string   `json:"balance_source"`
-	DeviceCreditKwh  *float64 `json:"device_credit_kwh"`
-	PlatformKwh      float64  `json:"platform_kwh"`
-	LowBalanceKwh    float64  `json:"low_balance_threshold_kwh"`
-	AutoTopup        AutoTopup `json:"auto_topup"`
-	OwnerUserID      *uuid.UUID `json:"owner_user_id,omitempty"`
+	KwhReserve      float64    `json:"kwh_reserve"`
+	BalanceSource   string     `json:"balance_source"`
+	DeviceCreditKwh *float64   `json:"device_credit_kwh"`
+	PlatformKwh     float64    `json:"platform_kwh"`
+	LowBalanceKwh   float64    `json:"low_balance_threshold_kwh"`
+	AutoTopup       AutoTopup  `json:"auto_topup"`
+	OwnerUserID     *uuid.UUID `json:"owner_user_id,omitempty"`
 }
 
 type AutoTopup struct {
@@ -301,10 +301,10 @@ func (s *Service) UnlinkMeter(ctx context.Context, p auth.Principal, meterID uui
 }
 
 type MeterSettingsInput struct {
-	Label            *string    `json:"label"`
-	LowBalanceKwh    *float64   `json:"low_balance_threshold_kwh"`
-	AutoTopup        *AutoTopup `json:"auto_topup"`
-	PropertyID       *uuid.UUID `json:"property_id"`
+	Label         *string    `json:"label"`
+	LowBalanceKwh *float64   `json:"low_balance_threshold_kwh"`
+	AutoTopup     *AutoTopup `json:"auto_topup"`
+	PropertyID    *uuid.UUID `json:"property_id"`
 }
 
 func (s *Service) UpdateMeterSettings(ctx context.Context, p auth.Principal, t Tenant, meterID uuid.UUID, in MeterSettingsInput) (Meter, error) {
@@ -715,10 +715,11 @@ type RegisterMeterInput struct {
 }
 
 type RegisteredMeter struct {
-	ID           uuid.UUID `json:"id"`
-	SerialNumber string    `json:"serial_number"`
-	MeterNumber  string    `json:"meter_number"`
-	DeviceSecret string    `json:"device_secret,omitempty"` // shown once, for provisioning into firmware
+	ID           uuid.UUID           `json:"id"`
+	SerialNumber string              `json:"serial_number"`
+	MeterNumber  string              `json:"meter_number"`
+	DeviceSecret string              `json:"device_secret,omitempty"` // shown once, for provisioning into firmware
+	MQTT         *MQTTConnectionInfo `json:"mqtt,omitempty"`
 }
 
 var serialRe = regexp.MustCompile(`^[A-Z0-9-]{6,40}$`)
@@ -764,6 +765,9 @@ func (s *Service) RegisterMeter(ctx context.Context, in RegisterMeterInput) (Reg
 		}
 		if err != nil {
 			return err
+		}
+		if in.CommsMode == "mqtt" {
+			out.MQTT = s.mqttInfo(in.SerialNumber)
 		}
 		return s.audit(ctx, tx, AuditEntry{Action: "platform.meter.register", TargetType: "meter", TargetID: out.ID.String(),
 			Metadata: map[string]any{"serial": in.SerialNumber, "comms": in.CommsMode}})
@@ -976,10 +980,10 @@ func (s *Service) checkLowBalance(ctx context.Context, tx pgx.Tx, tenant, meterI
 		return err
 	}
 	type link struct {
-		id, user                 uuid.UUID
-		label                    string
-		threshold                int64
-		notified, auto           bool
+		id, user                  uuid.UUID
+		label                     string
+		threshold                 int64
+		notified, auto            bool
 		autoThreshold, autoAmount int64
 	}
 	var links []link

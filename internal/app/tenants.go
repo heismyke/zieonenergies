@@ -312,13 +312,13 @@ func (s *Service) UpdateTenantSettings(ctx context.Context, t Tenant, in TenantS
 // ---------------------------------------------------------------------------
 
 type TariffInput struct {
-	ProviderCode     string `json:"provider_code"`
-	ProviderName     string `json:"provider_name"`
-	RateKoboPerKwh   int64  `json:"rate_kobo_per_kwh"`
-	ServiceFeeKobo   int64  `json:"service_fee_kobo"`
-	VatBps           int    `json:"vat_bps"`
-	MinPurchaseKobo  int64  `json:"min_purchase_kobo"`
-	MaxPurchaseKobo  int64  `json:"max_purchase_kobo"`
+	ProviderCode    string `json:"provider_code"`
+	ProviderName    string `json:"provider_name"`
+	RateKoboPerKwh  int64  `json:"rate_kobo_per_kwh"`
+	ServiceFeeKobo  int64  `json:"service_fee_kobo"`
+	VatBps          int    `json:"vat_bps"`
+	MinPurchaseKobo int64  `json:"min_purchase_kobo"`
+	MaxPurchaseKobo int64  `json:"max_purchase_kobo"`
 }
 
 type ProvisionInput struct {

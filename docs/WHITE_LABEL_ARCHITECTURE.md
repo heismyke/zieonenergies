@@ -25,7 +25,11 @@
                  └───────────────────────────────────────────────────┘
                                       ▲
            Zieon meters ──HMAC-signed telemetry── POST /v1/devices/telemetry
+           Zieon meters ══MQTT (8883 TLS / wss /mqtt)══ zieon-mqtt gateway (`api mqtt`)
+                          signed uplink: telemetry, acks · signed downlink: commands (device_commands queue)
 ```
+
+The MQTT gateway is an embedded broker (`mochi-mqtt`) in its own container, built from the same binary. Device login and topic ACLs come from the meter registry. Commands flow API → `device_commands` table → gateway → device, and acks flow back. See `MQTT_DEVICE_PROTOCOL.md`.
 
 ## Key decisions
 

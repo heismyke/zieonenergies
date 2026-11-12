@@ -34,6 +34,18 @@ type Config struct {
 
 	TrustProxyHeaders bool
 	WorkersEnabled    bool
+
+	// MQTT device gateway. Any non-empty listen address enables it.
+	MQTTTCPAddr    string   // plain TCP, lab/local only (e.g. 127.0.0.1:1883)
+	MQTTTLSAddr    string   // TLS, for devices (e.g. :8883)
+	MQTTTLSCert    string   // PEM path or glob; re-read on renewal
+	MQTTTLSKey     string   // PEM path or glob
+	MQTTWSAddr     string   // websocket listener, put behind a TLS proxy (wss)
+	MQTTPublicURLs []string // advertised to devices at provisioning
+}
+
+func (c Config) MQTTEnabled() bool {
+	return c.MQTTTCPAddr != "" || c.MQTTTLSAddr != "" || c.MQTTWSAddr != ""
 }
 
 // SandboxAllowed reports whether simulated payments/vending may be used.
@@ -56,6 +68,22 @@ func Load() (Config, error) {
 		TrustProxyHeaders:    get("TRUST_PROXY_HEADERS", "false") == "true",
 		WorkersEnabled:       get("WORKERS_ENABLED", "true") == "true",
 		DataKeys:             map[string][]byte{},
+		MQTTTCPAddr:          os.Getenv("MQTT_TCP_ADDR"),
+		MQTTTLSAddr:          os.Getenv("MQTT_TLS_ADDR"),
+		MQTTTLSCert:          os.Getenv("MQTT_TLS_CERT_FILE"),
+		MQTTTLSKey:           os.Getenv("MQTT_TLS_KEY_FILE"),
+		MQTTWSAddr:           os.Getenv("MQTT_WS_ADDR"),
+	}
+	for _, u := range strings.Split(os.Getenv("MQTT_PUBLIC_URLS"), ",") {
+		if u = strings.TrimSpace(u); u != "" {
+			c.MQTTPublicURLs = append(c.MQTTPublicURLs, u)
+		}
+	}
+	if c.MQTTTLSAddr != "" && (c.MQTTTLSCert == "" || c.MQTTTLSKey == "") {
+		return c, errors.New("MQTT_TLS_ADDR requires MQTT_TLS_CERT_FILE and MQTT_TLS_KEY_FILE")
+	}
+	if c.Env == "production" && c.MQTTTCPAddr != "" && !strings.HasPrefix(c.MQTTTCPAddr, "127.0.0.1:") {
+		return c, errors.New("plain-TCP MQTT may only listen on 127.0.0.1 in production")
 	}
 	for _, o := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
 		if o = strings.TrimSpace(o); o != "" {

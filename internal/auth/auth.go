@@ -27,12 +27,12 @@ const (
 
 // Partner API key scopes.
 const (
-	ScopeSessionsWrite     = "sessions:write"
-	ScopeCustomersRead     = "customers:read"
-	ScopeCustomersWrite    = "customers:write"
-	ScopeMembershipsWrite  = "memberships:write"
-	ScopeTransactionsRead  = "transactions:read"
-	ScopeMetersRead        = "meters:read"
+	ScopeSessionsWrite    = "sessions:write"
+	ScopeCustomersRead    = "customers:read"
+	ScopeCustomersWrite   = "customers:write"
+	ScopeMembershipsWrite = "memberships:write"
+	ScopeTransactionsRead = "transactions:read"
+	ScopeMetersRead       = "meters:read"
 )
 
 var AllScopes = []string{ScopeSessionsWrite, ScopeCustomersRead, ScopeCustomersWrite,

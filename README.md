@@ -22,11 +22,13 @@ TEST_DATABASE_URL='postgres://zieon:zieon_dev@localhost:55432/zieon?sslmode=disa
 ## Layout
 | Path | Purpose |
 |---|---|
-| `cmd/api` | Entrypoint. Commands: `serve` (default), `migrate`, `migrate-down` (non-production only), `seed-pilot` |
+| `cmd/api` | Entrypoint. Commands: `serve` (default), `mqtt` (device gateway only), `migrate`, `migrate-down` (non-production only), `seed-pilot` |
 | `internal/app` | Business rules: tenants, identity, meters, vending, benefits, admin, workers |
 | `internal/httpapi` | `/v1` REST handlers, middleware, and end-to-end tests |
 | `internal/db` | Pool, embedded migrations, `Tenant()`/`System()` RLS transaction helpers |
 | `internal/auth`, `internal/secure` | JWT and bcrypt; AES-GCM keyring, HMAC signatures |
 | `internal/vending`, `internal/payments` | Provider interfaces (sandbox, Paystack) |
+| `internal/mqttgw` | MQTT device gateway (embedded broker, registry-backed auth and ACLs, command dispatch) |
+| `pkg/zieondevice`, `cmd/devicesim` | Reference device client and meter simulator (firmware spec) |
 | `deploy/` | Production env template and backup script |
 | `docs/` | Audit, architecture, tenancy, vending flow, partner guide, security, regulatory, test plan, launch checklist |

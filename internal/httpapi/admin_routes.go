@@ -194,6 +194,42 @@ func (s *Server) adminReadings(w http.ResponseWriter, r *http.Request) error {
 	return writeJSON(w, 200, map[string]any{"readings": out})
 }
 
+func (s *Server) adminMeterCommands(w http.ResponseWriter, r *http.Request) error {
+	c, err := s.operator(r, false)
+	if err != nil {
+		return err
+	}
+	id, err := pathUUID(r, "id")
+	if err != nil {
+		return err
+	}
+	cs, err := s.svc.MeterCommands(r.Context(), c.Tenant.ID, id, queryInt(r, "limit", 50, 200))
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, 200, map[string]any{"commands": cs})
+}
+
+func (s *Server) adminSendCommand(w http.ResponseWriter, r *http.Request) error {
+	c, err := s.operator(r, true)
+	if err != nil {
+		return err
+	}
+	id, err := pathUUID(r, "id")
+	if err != nil {
+		return err
+	}
+	var in app.CommandInput
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	cmd, err := s.svc.SendMeterCommand(r.Context(), c.Tenant.ID, id, in)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, 202, cmd)
+}
+
 func (s *Server) adminTransfers(w http.ResponseWriter, r *http.Request) error {
 	c, err := s.operator(r, false)
 	if err != nil {
@@ -525,9 +561,9 @@ func (s *Server) platformTenantUpdate(w http.ResponseWriter, r *http.Request) er
 		return err
 	}
 	var in struct {
-		Status      string            `json:"status"`
-		VendingMode string            `json:"vending_mode"`
-		Tariff      *app.TariffInput  `json:"tariff"`
+		Status      string           `json:"status"`
+		VendingMode string           `json:"vending_mode"`
+		Tariff      *app.TariffInput `json:"tariff"`
 	}
 	if err := decode(r, &in); err != nil {
 		return err
