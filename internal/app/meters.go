@@ -15,6 +15,7 @@ import (
 	"github.com/heismyke/zieonenergies/internal/auth"
 	"github.com/heismyke/zieonenergies/internal/db"
 	"github.com/heismyke/zieonenergies/internal/secure"
+	"github.com/heismyke/zieonenergies/internal/vending"
 )
 
 // Capabilities describe what a meter can actually do. Nothing is assumed:
@@ -162,7 +163,7 @@ type MeterValidation struct {
 // ValidateMeter looks a meter up before purchase or linking. Zieon meters are
 // verified from our registry. DisCo customer lookup needs an aggregator
 // integration that does not exist yet, so external meters return verified=false.
-func (s *Service) ValidateMeter(ctx context.Context, p auth.Principal, providerCode, meterNumber string) (MeterValidation, error) {
+func (s *Service) ValidateMeter(ctx context.Context, p auth.Principal, providerCode, meterNumber, meterType string) (MeterValidation, error) {
 	providerCode = strings.ToUpper(strings.TrimSpace(providerCode))
 	meterNumber = strings.TrimSpace(meterNumber)
 	v := MeterValidation{ProviderCode: providerCode, MeterNumber: meterNumber}
@@ -187,6 +188,27 @@ func (s *Service) ValidateMeter(ctx context.Context, p auth.Principal, providerC
 	if providerCode == "ZIEON" {
 		v.Source, v.Message = "zieon_registry", "This Zieon meter is not registered to your organisation."
 		return v, nil
+	}
+	if val, ok := s.Vending["vtpass"].(vending.Validator); ok {
+		info, err := val.ValidateMeter(ctx, providerCode, meterNumber, meterType)
+		switch {
+		case err == nil:
+			v.Verified, v.Source = true, "disco"
+			v.CustomerName, v.Address, v.MeterType = info.CustomerName, info.Address, info.MeterType
+			if !info.CanVend {
+				v.Message = "The DisCo reports this meter cannot be vended at the moment."
+			}
+			return v, nil
+		case errors.Is(err, vending.ErrNotFound):
+			return v, errf(http.StatusNotFound, "meter_not_found", "the DisCo did not recognise this meter number")
+		case errors.Is(err, vending.ErrUnsupported):
+			v.Source, v.Message = "unverified", "Lookup is not available for this DisCo; confirm the meter number carefully."
+			return v, nil
+		default:
+			s.Log.Warn("meter lookup failed", "provider", providerCode, "err", err)
+			v.Source, v.Message = "unverified", "The DisCo lookup is temporarily unavailable; confirm the meter number carefully."
+			return v, nil
+		}
 	}
 	v.Source = "unverified"
 	v.Message = "DisCo customer lookup is not yet connected; confirm the meter number and enter the customer details."
@@ -218,6 +240,18 @@ func (s *Service) LinkMeter(ctx context.Context, p auth.Principal, t Tenant, in 
 	}
 	if in.MeterType != "prepaid" && in.MeterType != "postpaid" {
 		return Meter{}, errf(http.StatusBadRequest, "invalid_meter_type", "meter_type must be prepaid or postpaid")
+	}
+	// Fill the account holder from the DisCo when the app did not supply it.
+	if in.CustomerName == "" && in.ProviderCode != "ZIEON" {
+		if val, ok := s.Vending["vtpass"].(vending.Validator); ok {
+			info, err := val.ValidateMeter(ctx, in.ProviderCode, in.MeterNumber, in.MeterType)
+			if errors.Is(err, vending.ErrNotFound) {
+				return Meter{}, errf(http.StatusNotFound, "meter_not_found", "the DisCo did not recognise this meter number")
+			}
+			if err == nil {
+				in.CustomerName, in.Address = info.CustomerName, info.Address
+			}
+		}
 	}
 	var out Meter
 	err := s.DB.Tenant(ctx, p.TenantID, func(tx pgx.Tx) error {

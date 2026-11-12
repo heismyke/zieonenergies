@@ -32,6 +32,13 @@ type Config struct {
 	PaystackSecretKey    string
 	SandboxWebhookSecret string
 
+	// VTpass electricity aggregator (DisCo meters). Empty API key = disabled.
+	VTpassBaseURL       string
+	VTpassAPIKey        string
+	VTpassPublicKey     string
+	VTpassSecretKey     string
+	VTpassFallbackPhone string
+
 	TrustProxyHeaders bool
 	WorkersEnabled    bool
 
@@ -68,6 +75,11 @@ func Load() (Config, error) {
 		TrustProxyHeaders:    get("TRUST_PROXY_HEADERS", "false") == "true",
 		WorkersEnabled:       get("WORKERS_ENABLED", "true") == "true",
 		DataKeys:             map[string][]byte{},
+		VTpassBaseURL:        get("VTPASS_BASE_URL", "https://sandbox.vtpass.com"),
+		VTpassAPIKey:         os.Getenv("VTPASS_API_KEY"),
+		VTpassPublicKey:      os.Getenv("VTPASS_PUBLIC_KEY"),
+		VTpassSecretKey:      os.Getenv("VTPASS_SECRET_KEY"),
+		VTpassFallbackPhone:  get("VTPASS_FALLBACK_PHONE", "08011111111"),
 		MQTTTCPAddr:          os.Getenv("MQTT_TCP_ADDR"),
 		MQTTTLSAddr:          os.Getenv("MQTT_TLS_ADDR"),
 		MQTTTLSCert:          os.Getenv("MQTT_TLS_CERT_FILE"),
@@ -119,7 +131,13 @@ func Load() (Config, error) {
 	if _, ok := c.DataKeys[c.DataKeyID]; !ok {
 		return c, fmt.Errorf("DATA_ENCRYPTION_KEYS has no active key %q", c.DataKeyID)
 	}
+	if c.VTpassAPIKey != "" && c.VTpassSecretKey == "" {
+		return c, errors.New("VTPASS_SECRET_KEY is required when VTPASS_API_KEY is set")
+	}
 	if c.Env == "production" {
+		if c.VTpassAPIKey != "" && strings.Contains(c.VTpassBaseURL, "sandbox") {
+			return c, errors.New("production must not use the VTpass sandbox")
+		}
 		if c.PaystackSecretKey == "" {
 			return c, errors.New("production requires a live payment provider (PAYSTACK_SECRET_KEY)")
 		}

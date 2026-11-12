@@ -515,7 +515,7 @@ func (s *Service) SetTenantStatus(ctx context.Context, id uuid.UUID, status, ven
 	if vendingMode != "" && vendingMode != "sandbox" && vendingMode != "live" {
 		return Tenant{}, errf(http.StatusBadRequest, "invalid_vending_mode", "vending_mode must be sandbox or live")
 	}
-	if vendingMode == "live" && s.Vending["live"] == nil {
+	if vendingMode == "live" && !s.LiveRouteAvailable() {
 		return Tenant{}, errf(http.StatusConflict, "live_vending_unavailable",
 			"no authorised live vending route is configured on this platform; tenant must stay in sandbox")
 	}

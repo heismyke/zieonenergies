@@ -98,7 +98,12 @@ func (s *Service) ReconcileVends(ctx context.Context) error {
 		if vp == nil {
 			continue
 		}
-		res, lerr := vp.Lookup(ctx, x.id.String())
+		req, err := s.VendRequest(ctx, x.tenant, x.id)
+		if err != nil {
+			s.Log.Error("reconcile: load request", "txn", x.id, "err", err)
+			continue
+		}
+		res, lerr := vp.Lookup(ctx, req)
 		switch {
 		case lerr == nil:
 			s.applyVendResult(ctx, x.tenant, x.id, res, nil)

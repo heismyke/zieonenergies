@@ -10,7 +10,24 @@ A real route needs one of the following:
 1. **Zieon meters:** an STS-compliant vending system using an accredited **Key Management Centre**. Zieon's meters need Supply Group Codes and key revisions registered with the STS Association. The vending system then issues tokens under Zieon's own (or a licensed operator's) authority.
 2. **DisCo meters:** a vending agreement with each DisCo, or with a licensed aggregator. Under that agreement the DisCo's system issues the token.
 
-Both plug into `vending.Provider`. The contract is: `Vend` is idempotent on our `Reference`, and `Lookup(reference)` reports the outcome for reconciliation.
+Both plug into `vending.Provider`.
+
+### DisCo meters via VTpass (implemented)
+`internal/vending/vtpass.go` vends DisCo electricity through the VTpass aggregator, which holds the DisCo vending agreements (Zieon is its merchant/sub-agent). Routing (`vendProvider`):
+
+| Tenant mode | VTpass env | DisCo meter purchase goes to |
+|---|---|---|
+| sandbox | VTpass **sandbox** | VTpass sandbox (real API, test tokens, `sandbox: true`) |
+| sandbox | VTpass **live** | internal simulator — a test tenant never spends real money |
+| live | VTpass **live** | VTpass live (real tokens) |
+| live | VTpass sandbox / none | refused |
+
+- `request_id` = Lagos-time `YYYYMMDDHHmm` of the purchase + its id, so pay and requery always use the same id and VTpass de-duplicates retries (`014` → requery).
+- Amount sent = customer amount − our service fee; the DisCo applies its own tariff and VAT, and the **units it returns replace our estimate** on the purchase.
+- Response mapping follows https://www.vtpass.com/documentation/response-codes/: only codes meaning "not processed, nothing charged" refund automatically; `099`/`089`/`083`/`044` and pending statuses go to reconciliation (`/api/requery`), then human review.
+- Meter verification (`/api/merchant-verify`) fills customer name/address when linking and validating DisCo meters.
+- Postpaid meters: bill payment with no token; purchase goes straight to `delivered`.
+- A token the provider already issued before is never credited twice (purchase → `needs_review`). The contract is: `Vend` is idempotent on our `Reference`, and `Lookup(reference)` reports the outcome for reconciliation.
 
 ## Purchase state machine
 ```

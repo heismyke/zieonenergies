@@ -150,6 +150,9 @@ func newService(cfg config.Config, store *db.Store, log *slog.Logger) (*app.Serv
 		svc.Vending["sandbox"] = vending.NewSandbox()
 		svc.Payments["sandbox"] = payments.Sandbox{}
 	}
+	if cfg.VTpassAPIKey != "" {
+		svc.Vending["vtpass"] = vending.NewVTpass(cfg.VTpassBaseURL, cfg.VTpassAPIKey, cfg.VTpassPublicKey, cfg.VTpassSecretKey, cfg.VTpassFallbackPhone)
+	}
 	if cfg.PaystackSecretKey != "" {
 		svc.Payments["paystack"] = payments.NewPaystack(cfg.PaystackSecretKey)
 	}

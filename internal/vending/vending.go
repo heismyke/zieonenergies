@@ -14,6 +14,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/heismyke/zieonenergies/internal/secure"
 )
@@ -22,14 +23,31 @@ type Request struct {
 	Reference    string // our vend transaction id; providers must treat it as idempotent
 	MeterNumber  string
 	ProviderCode string
+	MeterType    string // prepaid | postpaid
 	EnergyWh     int64
-	AmountKobo   int64
+	AmountKobo   int64 // value to vend at the DisCo (customer amount minus our service fee)
+	Phone        string
+	CreatedAt    time.Time // stable per transaction; providers may derive ids from it
 }
 
 type Result struct {
-	Token             string
+	Token             string // empty for postpaid bill payments
 	EnergyWh          int64
 	ProviderReference string
+	Receipt           string // provider/DisCo receipt text, e.g. tariff and units
+}
+
+// MeterInfo is a DisCo's view of a meter before purchase.
+type MeterInfo struct {
+	CustomerName string
+	Address      string
+	MeterType    string
+	CanVend      bool
+}
+
+// Validator is implemented by providers that can look a meter up at the DisCo.
+type Validator interface {
+	ValidateMeter(ctx context.Context, providerCode, meterNumber, meterType string) (MeterInfo, error)
 }
 
 var (
@@ -37,14 +55,16 @@ var (
 	ErrRejected = errors.New("vend rejected by provider")
 	// ErrNotFound: the provider has no record of the reference; safe to retry or refund.
 	ErrNotFound = errors.New("vend reference not found at provider")
+	// ErrUnsupported: the provider does not serve this DisCo or meter type.
+	ErrUnsupported = errors.New("provider does not support this meter")
 )
 
 type Provider interface {
 	Name() string
 	Sandbox() bool
 	Vend(ctx context.Context, r Request) (Result, error)
-	// Lookup returns the outcome of an earlier Vend with the same reference.
-	Lookup(ctx context.Context, reference string) (Result, error)
+	// Lookup returns the outcome of an earlier Vend of the same request.
+	Lookup(ctx context.Context, r Request) (Result, error)
 }
 
 // Sandbox simulates a vending switch. Meter numbers ending in "0000" are
@@ -79,10 +99,10 @@ func (s *Sandbox) Vend(_ context.Context, r Request) (Result, error) {
 	return res, nil
 }
 
-func (s *Sandbox) Lookup(_ context.Context, ref string) (Result, error) {
+func (s *Sandbox) Lookup(_ context.Context, req Request) (Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if r, ok := s.done[ref]; ok {
+	if r, ok := s.done[req.Reference]; ok {
 		return r, nil
 	}
 	return Result{}, ErrNotFound

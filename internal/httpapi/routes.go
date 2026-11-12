@@ -433,11 +433,12 @@ func (s *Server) validateMeter(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
 		ProviderCode string `json:"provider_code"`
 		MeterNumber  string `json:"meter_number"`
+		MeterType    string `json:"meter_type"`
 	}
 	if err := decode(r, &in); err != nil {
 		return err
 	}
-	v, err := s.svc.ValidateMeter(r.Context(), c.P, in.ProviderCode, in.MeterNumber)
+	v, err := s.svc.ValidateMeter(r.Context(), c.P, in.ProviderCode, in.MeterNumber, in.MeterType)
 	if err != nil {
 		return err
 	}

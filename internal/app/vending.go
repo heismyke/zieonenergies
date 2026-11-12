@@ -179,17 +179,40 @@ type PaymentInfo struct {
 	BankAccount *payments.BankAccount `json:"bank_account,omitempty"`
 }
 
-func (s *Service) vendProvider(t Tenant) (vending.Provider, error) {
-	if t.VendingMode == "sandbox" {
-		if !s.Cfg.SandboxAllowed() {
-			return nil, errf(http.StatusServiceUnavailable, "vending_unavailable", "sandbox vending is disabled in production")
+// vendProvider picks the route for a meter. DisCo meters go to the
+// aggregator ("vtpass"); Zieon meters to the STS route ("live"). A sandbox
+// tenant never reaches a live provider (no real money), and a live tenant
+// never reaches a sandbox one (no fake tokens).
+func (s *Service) vendProvider(t Tenant, ownership string) (vending.Provider, error) {
+	var route vending.Provider
+	if ownership == "external" {
+		route = s.Vending["vtpass"]
+	} else {
+		route = s.Vending["live"]
+	}
+	if t.VendingMode == "live" {
+		if route == nil || route.Sandbox() {
+			return nil, errf(http.StatusServiceUnavailable, "vending_unavailable", "no authorised vending route is configured for this meter")
 		}
-		return s.Vending["sandbox"], nil
+		return route, nil
 	}
-	if p := s.Vending["live"]; p != nil {
-		return p, nil
+	if !s.Cfg.SandboxAllowed() {
+		return nil, errf(http.StatusServiceUnavailable, "vending_unavailable", "sandbox vending is disabled in production")
 	}
-	return nil, errf(http.StatusServiceUnavailable, "vending_unavailable", "no authorised vending route is configured")
+	if route != nil && route.Sandbox() {
+		return route, nil // e.g. the VTpass sandbox: real API, test tokens
+	}
+	return s.Vending["sandbox"], nil
+}
+
+// LiveRouteAvailable reports whether any non-sandbox vending route exists.
+func (s *Service) LiveRouteAvailable() bool {
+	for _, k := range []string{"live", "vtpass"} {
+		if p := s.Vending[k]; p != nil && !p.Sandbox() {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) paymentProvider(method string) (payments.Provider, error) {
@@ -231,14 +254,14 @@ func (s *Service) Purchase(ctx context.Context, p auth.Principal, t Tenant, in P
 	if in.UseRewards && !t.Enabled("benefits") {
 		return Purchase{}, ErrFeatureOff
 	}
-	vp, err := s.vendProvider(t)
-	if err != nil {
-		return Purchase{}, err
-	}
 	var txnID uuid.UUID
 	var pay *paymentRow
-	err = s.DB.Tenant(ctx, p.TenantID, func(tx pgx.Tx) error {
+	err := s.DB.Tenant(ctx, p.TenantID, func(tx pgx.Tx) error {
 		m, err := myMeter(ctx, tx, p, in.MeterID)
+		if err != nil {
+			return err
+		}
+		vp, err := s.vendProvider(t, m.Ownership)
 		if err != nil {
 			return err
 		}
@@ -334,10 +357,8 @@ func (s *Service) executeVend(ctx context.Context, tenant, txnID uuid.UUID) {
 	var providerName string
 	err := s.DB.Tenant(ctx, tenant, func(tx pgx.Tx) error {
 		var status string
-		err := tx.QueryRow(ctx, `SELECT v.status, v.provider, m.meter_number, m.provider_code, v.energy_wh, v.amount_kobo
-			FROM vend_transactions v JOIN meters m ON m.id=v.meter_id WHERE v.id=$1 FOR UPDATE OF v`, txnID).
-			Scan(&status, &providerName, &req.MeterNumber, &req.ProviderCode, &req.EnergyWh, &req.AmountKobo)
-		if err != nil {
+		var err error
+		if req, providerName, status, err = loadVendRequest(ctx, tx, txnID, true); err != nil {
 			return err
 		}
 		if status != StVending {
@@ -354,20 +375,45 @@ func (s *Service) executeVend(ctx context.Context, tenant, txnID uuid.UUID) {
 	}
 	vp := s.Vending[providerName]
 	if vp == nil {
-		vp = s.Vending["live"]
-	}
-	if vp == nil {
 		s.Log.Error("vend: provider missing", "txn", txnID, "provider", providerName)
 		return
 	}
-	req.Reference = txnID.String()
-	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	callCtx, cancel := context.WithTimeout(ctx, 50*time.Second)
 	res, verr := vp.Vend(callCtx, req)
 	cancel()
 	s.applyVendResult(ctx, tenant, txnID, res, verr)
 }
 
 var errSkip = errors.New("skip")
+
+// loadVendRequest builds the provider request for a vend transaction. The
+// amount sent to the DisCo excludes our service fee.
+func loadVendRequest(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock bool) (vending.Request, string, string, error) {
+	var r vending.Request
+	var provider, status string
+	var fee int64
+	q := `SELECT v.status, v.provider, m.meter_number, m.provider_code, m.meter_type, v.energy_wh, v.amount_kobo, v.fee_kobo,
+		u.phone, v.created_at FROM vend_transactions v JOIN meters m ON m.id=v.meter_id JOIN users u ON u.id=v.user_id WHERE v.id=$1`
+	if lock {
+		q += ` FOR UPDATE OF v`
+	}
+	err := tx.QueryRow(ctx, q, id).Scan(&status, &provider, &r.MeterNumber, &r.ProviderCode, &r.MeterType, &r.EnergyWh,
+		&r.AmountKobo, &fee, &r.Phone, &r.CreatedAt)
+	r.AmountKobo -= fee
+	r.Reference = id.String()
+	return r, provider, status, err
+}
+
+// VendRequest is used by reconciliation to re-ask the provider about a vend.
+func (s *Service) VendRequest(ctx context.Context, tenant, id uuid.UUID) (vending.Request, error) {
+	var r vending.Request
+	err := s.DB.Tenant(ctx, tenant, func(tx pgx.Tx) error {
+		var err error
+		r, _, _, err = loadVendRequest(ctx, tx, id, false)
+		return err
+	})
+	return r, err
+}
 
 func (s *Service) applyVendResult(ctx context.Context, tenant, txnID uuid.UUID, res vending.Result, verr error) {
 	err := s.DB.Tenant(ctx, tenant, func(tx pgx.Tx) error {
@@ -415,7 +461,35 @@ func lockVend(ctx context.Context, tx pgx.Tx, id uuid.UUID) (vendRow, error) {
 
 func (s *Service) completeVend(ctx context.Context, tx pgx.Tx, v vendRow, res vending.Result) error {
 	if res.Token == "" {
-		return s.markReview(ctx, tx, v, "provider returned success without a token")
+		var mt string
+		if err := tx.QueryRow(ctx, `SELECT meter_type FROM meters WHERE id=$1`, v.meter).Scan(&mt); err != nil {
+			return err
+		}
+		if mt != "postpaid" {
+			return s.markReview(ctx, tx, v, "provider returned success without a token")
+		}
+		// Postpaid: the bill is paid at the DisCo; there is no token to deliver.
+		if err := setStatus(ctx, tx, v.id, StVending, StVended, ""); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE vend_transactions SET provider_reference=$2, vended_at=now(), delivered_at=now(), status='delivered',
+			failure_reason='' WHERE id=$1`, v.id, res.ProviderReference); err != nil {
+			return err
+		}
+		if err := notify(ctx, tx, v.tenant, &v.user, "Bill paid", fmt.Sprintf("Your postpaid bill payment of ₦%.2f was received.", float64(v.amount)/100), "purchase", false); err != nil {
+			return err
+		}
+		return emit(ctx, tx, v.tenant, "purchase.vended", map[string]any{"purchase_id": v.id, "user_id": v.user, "meter_id": v.meter,
+			"amount_kobo": v.amount, "postpaid": true, "sandbox": v.sandbox})
+	}
+	var dup bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM energy_tokens WHERE token_hash=$1)`,
+		secure.HashSecret(normalizeToken(res.Token))).Scan(&dup); err != nil {
+		return err
+	}
+	if dup {
+		// A token we already issued must never be credited twice.
+		return s.markReview(ctx, tx, v, "provider returned a token that was already issued")
 	}
 	if err := setStatus(ctx, tx, v.id, StVending, StVended, ""); err != nil {
 		return err
@@ -426,7 +500,11 @@ func (s *Service) completeVend(ctx context.Context, tx pgx.Tx, v vendRow, res ve
 	}
 	energy := v.energyWh
 	if res.EnergyWh > 0 {
-		energy = res.EnergyWh // the vending route is authoritative for units issued
+		// The DisCo is authoritative for units issued; our quote was an estimate.
+		energy = res.EnergyWh
+		if _, err := tx.Exec(ctx, `UPDATE vend_transactions SET energy_wh=$2 WHERE id=$1`, v.id, energy); err != nil {
+			return err
+		}
 	}
 	if _, err := s.insertToken(ctx, tx, v.tenant, v.meter, v.user, "purchase", &v.id, res.Token, energy, "", v.sandbox); err != nil {
 		return err
