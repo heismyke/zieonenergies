@@ -1,0 +1,66 @@
+# PRODUCTION stack (real money). Separate project, database and secrets from
+# the staging/pilot stack in docker-compose.prod.yml.
+#   cd ~/apps/zieon-live
+#   docker compose --env-file .env.live -f docker-compose.live.yml up -d --build
+#   docker compose --env-file .env.live -f docker-compose.live.yml exec api /app/api bootstrap
+name: zieon-live
+
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env.live
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgres://zieon:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/zieon?sslmode=disable
+      PORT: "8080"
+      TRUST_PROXY_HEADERS: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      default:
+      proxy:
+        aliases:
+          - zieon-live-api
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "10"
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zieon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: zieon
+    volumes:
+      - pgdata-live:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zieon -d zieon"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+
+volumes:
+  pgdata-live:
+
+networks:
+  proxy:
+    external: true
+    name: hixmastudio-proxy_default

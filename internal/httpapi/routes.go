@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +30,12 @@ func (s *Server) routes() {
 
 	// Public: tenant branding and catalogue.
 	s.handle("GET /v1/branding", s.getBranding)
+
+	// Public guest checkout ("buy electricity" without an account).
+	s.handle("GET /v1/public/discos", s.publicDiscos)
+	s.handle("POST /v1/public/meters/verify", s.publicVerifyMeter)
+	s.handle("POST /v1/public/orders", s.publicCreateOrder)
+	s.handle("GET /v1/public/orders/{id}", s.publicGetOrder)
 
 	// Customer authentication.
 	s.handle("POST /v1/auth/register", s.register)
@@ -1080,4 +1087,96 @@ func (s *Server) partnerMeters(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return writeJSON(w, 200, map[string]any{"meters": ms})
+}
+
+// ---------------------------------------------------------------------------
+// Guest checkout
+// ---------------------------------------------------------------------------
+
+func (s *Server) publicDiscos(w http.ResponseWriter, r *http.Request) error {
+	if !s.publicLimiter.Allow(app.Meta(r.Context()).IP) {
+		return tooMany()
+	}
+	t, err := s.publicTenant(r)
+	if err != nil {
+		return err
+	}
+	ds, err := s.svc.PublicDiscos(r.Context(), t)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	return writeJSON(w, 200, map[string]any{"discos": ds})
+}
+
+func (s *Server) publicVerifyMeter(w http.ResponseWriter, r *http.Request) error {
+	if !s.lookupLimiter.Allow(app.Meta(r.Context()).IP) {
+		return tooMany()
+	}
+	var in struct {
+		ProviderCode string `json:"provider_code"`
+		MeterNumber  string `json:"meter_number"`
+		MeterType    string `json:"meter_type"`
+	}
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	t, err := s.publicTenant(r)
+	if err != nil {
+		return err
+	}
+	m, err := s.svc.VerifyPublicMeter(r.Context(), t, in.ProviderCode, in.MeterNumber, in.MeterType)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, 200, m)
+}
+
+func (s *Server) publicCreateOrder(w http.ResponseWriter, r *http.Request) error {
+	if !s.orderLimiter.Allow(app.Meta(r.Context()).IP) {
+		return tooMany()
+	}
+	body, err := readBody(r)
+	if err != nil {
+		return err
+	}
+	var in app.GuestOrderInput
+	if err := decodeBytes(body, &in); err != nil {
+		return err
+	}
+	t, err := s.publicTenant(r)
+	if err != nil {
+		return err
+	}
+	// Paystack returns the buyer to the site they started on, if it is approved.
+	if o := strings.TrimRight(r.Header.Get("Origin"), "/"); o != "" && s.originAllowed(r.Context(), o) {
+		in.ReturnURL = o
+	}
+	status, resp, err := s.svc.Idempotent(r.Context(), t.ID, "guest", r.Header.Get("Idempotency-Key"), body, func() (int, any, error) {
+		o, err := s.svc.CreateGuestOrder(r.Context(), t, in)
+		return 201, o, err
+	})
+	if err != nil {
+		return err
+	}
+	return writeRaw(w, status, resp)
+}
+
+func (s *Server) publicGetOrder(w http.ResponseWriter, r *http.Request) error {
+	if !s.publicLimiter.Allow(app.Meta(r.Context()).IP) {
+		return tooMany()
+	}
+	id, err := pathUUID(r, "id")
+	if err != nil {
+		return err
+	}
+	t, err := s.publicTenant(r)
+	if err != nil {
+		return err
+	}
+	o, err := s.svc.GuestOrder(r.Context(), t, id, r.URL.Query().Get("key"))
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, 200, o)
 }

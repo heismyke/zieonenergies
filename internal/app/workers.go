@@ -33,6 +33,7 @@ func (s *Service) RunWorkers(ctx context.Context) {
 		{"meter_offline", time.Minute, s.DetectOfflineMeters},
 		{"expire_rewards", 10 * time.Minute, func(ctx context.Context) error { _, err := s.ExpireRewards(ctx); return err }},
 		{"expire_commands", time.Minute, s.ExpireCommands},
+		{"card_refunds", time.Minute, s.RunCardRefunds},
 		{"cleanup", time.Hour, s.Cleanup},
 	}
 	for _, j := range jobs {
@@ -405,4 +406,53 @@ func truncate(s string, n int) string {
 		return s[:n]
 	}
 	return s
+}
+
+// RunCardRefunds sends queued refunds (failed guest purchases) back to the
+// payer's card or account through the payment provider. Failures are retried
+// on the next run; the payment stays refund_pending until the provider accepts.
+func (s *Service) RunCardRefunds(ctx context.Context) error {
+	type r struct {
+		tenant        uuid.UUID
+		ref, provider string
+		amount        int64
+	}
+	var list []r
+	err := s.DB.System(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT tenant_id, reference, provider, amount_kobo FROM payments
+			WHERE status='refund_pending' ORDER BY updated_at LIMIT 50`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var x r
+			if err := rows.Scan(&x.tenant, &x.ref, &x.provider, &x.amount); err != nil {
+				return err
+			}
+			list = append(list, x)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return err
+	}
+	for _, x := range list {
+		pp := s.Payments[x.provider]
+		if pp == nil {
+			continue
+		}
+		if err := pp.Refund(ctx, x.ref, x.amount); err != nil {
+			s.Log.Error("card refund failed", "ref", x.ref, "err", err)
+			continue
+		}
+		_ = s.DB.Tenant(ctx, x.tenant, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, `UPDATE payments SET status='refunded', updated_at=now() WHERE reference=$1 AND status='refund_pending'`, x.ref); err != nil {
+				return err
+			}
+			return s.audit(ctx, tx, AuditEntry{TenantID: &x.tenant, Action: "payment.refund", TargetType: "payment", TargetID: x.ref,
+				Metadata: map[string]any{"amount_kobo": x.amount, "provider": x.provider}})
+		})
+	}
+	return nil
 }

@@ -5,6 +5,7 @@
 //	api migrate-down  roll back the latest migration (development only)
 //	api seed-pilot    provision sandbox pilot tenants (non-production only)
 //	api mqtt          run only the MQTT device gateway (no HTTP, no workers)
+//	api bootstrap     create the buy-only production tenant (idempotent)
 package main
 
 import (
@@ -15,6 +16,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -80,6 +83,23 @@ func run(log *slog.Logger) error {
 	case "seed-pilot":
 		res, err := svc.SeedPilot(ctx)
 		for _, l := range res.Lines {
+			fmt.Println(l)
+		}
+		return err
+	case "bootstrap":
+		var origins []string
+		for _, o := range strings.Split(os.Getenv("BOOTSTRAP_ORIGINS"), ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				origins = append(origins, o)
+			}
+		}
+		fee, _ := strconv.ParseInt(os.Getenv("SERVICE_FEE_KOBO"), 10, 64)
+		email := os.Getenv("BOOTSTRAP_ADMIN_EMAIL")
+		if email == "" {
+			return errors.New("bootstrap: set BOOTSTRAP_ADMIN_EMAIL")
+		}
+		lines, err := svc.Bootstrap(ctx, app.BootstrapInput{AdminEmail: email, Origins: origins, ServiceFeeKobo: fee})
+		for _, l := range lines {
 			fmt.Println(l)
 		}
 		return err

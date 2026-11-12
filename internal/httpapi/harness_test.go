@@ -49,13 +49,19 @@ type env struct {
 type deferredPay struct {
 	mu       sync.Mutex
 	verified map[string]payments.Verification
+	callback string // last CallbackURL passed to Initialize
 }
 
 func (d *deferredPay) Name() string  { return "sandbox" }
 func (d *deferredPay) Sandbox() bool { return true }
 func (d *deferredPay) Initialize(_ context.Context, in payments.Intent) (payments.Session, error) {
+	d.mu.Lock()
+	d.callback = in.CallbackURL
+	d.mu.Unlock()
 	return payments.Session{CheckoutURL: "https://pay.test/" + in.Reference}, nil
 }
+func (d *deferredPay) Refund(context.Context, string, int64) error { return nil }
+
 func (d *deferredPay) Verify(_ context.Context, ref string) (payments.Verification, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

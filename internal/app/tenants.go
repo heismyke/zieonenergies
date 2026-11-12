@@ -21,6 +21,7 @@ var KnownFeatures = map[string]bool{
 	"wallet": true, "spark_share": true, "external_meters": true, "auto_topup": true,
 	"card_payments": true, "bank_transfer": true, "crypto_payments": false, "benefits": false,
 	"energy_exchange": false, "subscriptions": true, "support_chat": true, "properties": false,
+	"guest_checkout": true,
 }
 
 func DefaultFeatures() map[string]bool {
@@ -343,7 +344,7 @@ var NigerianDiscos = [][2]string{
 	{"AEDC", "Abuja Electricity"}, {"EKEDC", "Eko Electricity"}, {"KEDC", "Kaduna Electricity"},
 	{"IKEDC", "Ikeja Electricity"}, {"PHED", "Port Harcourt Electricity"}, {"BEDC", "Benin Electricity"},
 	{"EEDC", "Enugu Electricity"}, {"IBEDC", "Ibadan Electricity"}, {"JED", "Jos Electricity"},
-	{"KEDCO", "Kano Electricity"}, {"YEDC", "Yola Electricity"}, {"ZIEON", "Zieon Smart Meter"},
+	{"KEDCO", "Kano Electricity"}, {"YEDC", "Yola Electricity"}, {"ABA", "Aba Electricity"}, {"ZIEON", "Zieon Smart Meter"},
 }
 
 func (s *Service) ProvisionTenant(ctx context.Context, in ProvisionInput) (Tenant, error) {
@@ -521,7 +522,7 @@ func (s *Service) SetTenantStatus(ctx context.Context, id uuid.UUID, status, ven
 	}
 	err := s.DB.System(ctx, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `UPDATE tenants SET status=coalesce(nullif($2,''),status), vending_mode=coalesce(nullif($3,''),vending_mode),
-			updated_at=now() WHERE id=$1 AND NOT is_platform`, id, status, vendingMode)
+			updated_at=now() WHERE id=$1 AND (NOT is_platform OR $2 = '')`, id, status, vendingMode) // the platform tenant can switch vending mode but never be suspended
 		if err != nil {
 			return err
 		}

@@ -35,6 +35,8 @@ type Server struct {
 	partnerLimiter *ratelimit.Limiter // per API key
 	deviceLimiter  *ratelimit.Limiter // per meter
 	publicLimiter  *ratelimit.Limiter // per IP, unauthenticated reads
+	lookupLimiter  *ratelimit.Limiter // per IP, public meter verification
+	orderLimiter   *ratelimit.Limiter // per IP, guest order creation
 }
 
 func New(svc *app.Service, log *slog.Logger, defaultTenant string) *Server {
@@ -45,6 +47,8 @@ func New(svc *app.Service, log *slog.Logger, defaultTenant string) *Server {
 		partnerLimiter: ratelimit.New(600, 100),
 		deviceLimiter:  ratelimit.New(60, 20),
 		publicLimiter:  ratelimit.New(120, 40),
+		lookupLimiter:  ratelimit.New(30, 10),
+		orderLimiter:   ratelimit.New(10, 5),
 	}
 	s.routes()
 	return s

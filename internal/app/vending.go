@@ -239,6 +239,10 @@ func (s *Service) checkMethod(t Tenant, method string) error {
 		if !t.Enabled("bank_transfer") {
 			return ErrFeatureOff
 		}
+	case "checkout":
+		if !t.Enabled("card_payments") {
+			return ErrFeatureOff
+		}
 	case "crypto":
 		return errf(http.StatusBadRequest, "unsupported_method", "crypto payments are not supported")
 	default:
@@ -248,6 +252,14 @@ func (s *Service) checkMethod(t Tenant, method string) error {
 }
 
 func (s *Service) Purchase(ctx context.Context, p auth.Principal, t Tenant, in PurchaseInput) (Purchase, error) {
+	return s.purchaseWithHook(ctx, p, t, in, nil)
+}
+
+// purchaseHook runs inside the purchase transaction once the vend row exists;
+// a non-empty return value becomes the payment provider's callback URL.
+type purchaseHook func(ctx context.Context, tx pgx.Tx, vendID uuid.UUID) (string, error)
+
+func (s *Service) purchaseWithHook(ctx context.Context, p auth.Principal, t Tenant, in PurchaseInput, hook purchaseHook) (Purchase, error) {
 	if err := s.checkMethod(t, in.PaymentMethod); err != nil {
 		return Purchase{}, err
 	}
@@ -312,6 +324,15 @@ func (s *Service) Purchase(ctx context.Context, p auth.Principal, t Tenant, in P
 			return err
 		}
 		ref := txnID.String()
+		if hook != nil {
+			cb, err := hook(ctx, tx, txnID)
+			if err != nil {
+				return err
+			}
+			if cb != "" {
+				in.CallbackURL = cb
+			}
+		}
 		if rewardKobo > 0 {
 			if err := consumeRewards(ctx, tx, p.TenantID, p.UserID, rewardKobo, ref); err != nil {
 				return err
@@ -557,7 +578,20 @@ func (s *Service) refund(ctx context.Context, tx pgx.Tx, v vendRow, from, reason
 			return err
 		}
 	}
-	if toWallet := v.wallet + v.external; toWallet > 0 {
+	var guest bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM guest_orders WHERE vend_transaction_id=$1)`, v.id).Scan(&guest); err != nil {
+		return err
+	}
+	toWallet := v.wallet + v.external
+	if guest && v.external > 0 {
+		// Guests have no wallet to spend from: return card money to the card.
+		toWallet -= v.external
+		if _, err := tx.Exec(ctx, `UPDATE payments SET status='refund_pending', updated_at=now()
+			WHERE vend_transaction_id=$1 AND status='succeeded'`, v.id); err != nil {
+			return err
+		}
+	}
+	if toWallet > 0 {
 		if err := transfer(ctx, tx, v.tenant, AcctClearing, v.tenant, AcctWallet, v.user, toWallet, "refund", ref, "Refund: "+reason); err != nil {
 			return err
 		}

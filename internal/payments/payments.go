@@ -48,6 +48,8 @@ type Provider interface {
 	Sandbox() bool
 	Initialize(ctx context.Context, in Intent) (Session, error)
 	Verify(ctx context.Context, reference string) (Verification, error)
+	// Refund returns a captured payment to the payer's original instrument.
+	Refund(ctx context.Context, reference string, amountKobo int64) error
 }
 
 type Sandbox struct{}
@@ -64,6 +66,7 @@ func (Sandbox) Initialize(_ context.Context, in Intent) (Session, error) {
 func (Sandbox) Verify(_ context.Context, _ string) (Verification, error) {
 	return Verification{Status: "succeeded"}, nil
 }
+func (Sandbox) Refund(context.Context, string, int64) error { return nil }
 
 // Paystack implements https://paystack.com/docs/api/transaction/.
 // It has not been exercised against live Paystack credentials in this codebase.
@@ -81,14 +84,17 @@ func (p *Paystack) Name() string  { return "paystack" }
 func (p *Paystack) Sandbox() bool { return false }
 
 func (p *Paystack) Initialize(ctx context.Context, in Intent) (Session, error) {
-	channels := []string{"card"}
-	if in.Method == "bank_transfer" {
-		channels = []string{"bank_transfer"}
-	}
-	body, _ := json.Marshal(map[string]any{
+	req := map[string]any{
 		"email": in.Email, "amount": in.AmountKobo, "reference": in.Reference,
-		"currency": in.Currency, "channels": channels, "callback_url": in.CallbackURL,
-	})
+		"currency": in.Currency, "callback_url": in.CallbackURL,
+	}
+	switch in.Method {
+	case "card":
+		req["channels"] = []string{"card"}
+	case "bank_transfer":
+		req["channels"] = []string{"bank_transfer"}
+	} // "checkout": every channel enabled on the Paystack account
+	body, _ := json.Marshal(req)
 	var out struct {
 		Status  bool   `json:"status"`
 		Message string `json:"message"`
@@ -125,6 +131,22 @@ func (p *Paystack) Verify(ctx context.Context, ref string) (Verification, error)
 		v.Status = "failed"
 	}
 	return v, nil
+}
+
+// Refund implements https://paystack.com/docs/api/refund/ (full or partial).
+func (p *Paystack) Refund(ctx context.Context, reference string, amountKobo int64) error {
+	body, _ := json.Marshal(map[string]any{"transaction": reference, "amount": amountKobo})
+	var out struct {
+		Status  bool   `json:"status"`
+		Message string `json:"message"`
+	}
+	if err := p.do(ctx, http.MethodPost, "/refund", body, &out); err != nil {
+		return err
+	}
+	if !out.Status {
+		return fmt.Errorf("paystack refund: %s", out.Message)
+	}
+	return nil
 }
 
 func (p *Paystack) do(ctx context.Context, method, path string, body []byte, out any) error {
