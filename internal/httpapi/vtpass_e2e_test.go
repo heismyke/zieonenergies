@@ -19,6 +19,7 @@ type fakeAggregator struct {
 	mu      sync.Mutex
 	settled map[string]string // request_id -> response body for requery
 	pays    int
+	repeat  bool // like the real VTpass sandbox: same token every time
 }
 
 func (f *fakeAggregator) handler(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +38,9 @@ func (f *fakeAggregator) handler(w http.ResponseWriter, r *http.Request) {
 		id := b["request_id"].(string)
 		f.pays++
 		tok := fmt.Sprintf("1234 5678 9012 3456 %04d", f.pays)
+		if f.repeat {
+			tok = "2636 2054 4059 8275 7802"
+		}
 		ok := `{"code":"000","content":{"transactions":{"status":"delivered","transactionId":"T` + id[12:20] + `"}},
 			"purchased_code":"Token : ` + tok + `","units":"9.5 kWh"}`
 		switch b["billersCode"] {
@@ -115,6 +119,27 @@ func TestVTpassAggregatorFlow(t *testing.T) {
 		t.Fatalf("wallet %v", e.walletKobo(c))
 	}
 
+	// The real VTpass sandbox returns one fixed test token for every purchase.
+	// Each purchase must still succeed and be redeemable once, by any account.
+	agg.repeat = true
+	other := e.customer(p.Slug, "d@zen.test")
+	e.fund(other, 500000)
+	r2 := e.must(e.do("POST", "/v1/meters", other.Token, map[string]string{"provider_code": "IKEDC", "meter_number": "1111111111111", "label": "Same meter"}), 201)
+	shared := meter{ID: r2.str("id"), Number: "1111111111111"}
+	t1 := e.must(e.buy(c, ok, 100000), 201)
+	t2 := e.must(e.buy(other, shared, 100000), 201)
+	if t1.str("status") != "vended" || t2.str("status") != "vended" || t1.str("token") != t2.str("token") {
+		t.Fatalf("repeated sandbox token must not block purchases: %s | %s", t1.Raw, t2.Raw)
+	}
+	e.must(e.do("POST", "/v1/tokens/redeem", c.Token, map[string]any{"meter_id": ok.ID, "token": t1.str("token")}), 200)
+	e.must(e.do("POST", "/v1/tokens/redeem", other.Token, map[string]any{"meter_id": shared.ID, "token": t2.str("token")}), 200)
+	for _, id := range []string{t1.str("id"), t2.str("id")} {
+		if g := e.must(e.do("GET", "/v1/purchases/"+id, e.loginAs(c, other, id), nil), 200); g.str("status") != "delivered" {
+			t.Fatalf("each repeated-token purchase must deliver: %s", g.Raw)
+		}
+	}
+	agg.repeat = false
+
 	// A sandbox aggregator can never serve a live tenant.
 	e.must(e.do("PATCH", "/v1/platform/tenants/"+p.ID, e.platform, map[string]string{"vending_mode": "live"}), 409)
 	// A live aggregator is never used for a sandbox tenant (no real money in test mode).
@@ -124,4 +149,12 @@ func TestVTpassAggregatorFlow(t *testing.T) {
 	if agg.pays != paysBefore || !strings.HasPrefix(sb.str("token"), "99") {
 		t.Fatalf("sandbox tenant must use the internal simulator when the aggregator is live: %s", sb.Raw)
 	}
+}
+
+// loginAs picks whichever customer owns the purchase.
+func (e *env) loginAs(a, b customer, purchaseID string) string {
+	if r := e.do("GET", "/v1/purchases/"+purchaseID, a.Token, nil); r.Status == 200 {
+		return a.Token
+	}
+	return b.Token
 }

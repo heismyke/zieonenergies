@@ -487,9 +487,14 @@ func (s *Service) completeVend(ctx context.Context, tx pgx.Tx, v vendRow, res ve
 		secure.HashSecret(normalizeToken(res.Token))).Scan(&dup); err != nil {
 		return err
 	}
+	salt := ""
 	if dup {
-		// A token we already issued must never be credited twice.
-		return s.markReview(ctx, tx, v, "provider returned a token that was already issued")
+		if !v.sandbox {
+			// A real token we already issued must never be credited twice.
+			return s.markReview(ctx, tx, v, "provider returned a token that was already issued")
+		}
+		// Sandbox aggregators reuse one test token; keep each purchase distinct.
+		salt = v.id.String()
 	}
 	if err := setStatus(ctx, tx, v.id, StVending, StVended, ""); err != nil {
 		return err
@@ -506,7 +511,7 @@ func (s *Service) completeVend(ctx context.Context, tx pgx.Tx, v vendRow, res ve
 			return err
 		}
 	}
-	if _, err := s.insertToken(ctx, tx, v.tenant, v.meter, v.user, "purchase", &v.id, res.Token, energy, "", v.sandbox); err != nil {
+	if _, err := s.insertTokenSalted(ctx, tx, v.tenant, v.meter, v.user, "purchase", &v.id, res.Token, salt, energy, "", v.sandbox); err != nil {
 		return err
 	}
 	earned, err := s.grantPurchaseRewards(ctx, tx, v)
@@ -920,6 +925,19 @@ func normalizeToken(t string) string {
 }
 
 func (s *Service) insertToken(ctx context.Context, tx pgx.Tx, tenant, meter, user uuid.UUID, source string, vendID *uuid.UUID, token string, wh int64, note string, sandbox bool) (uuid.UUID, error) {
+	return s.insertTokenSalted(ctx, tx, tenant, meter, user, source, vendID, token, "", wh, note, sandbox)
+}
+
+// tokenHash is the lookup key. Real tokens hash on their digits alone, so a
+// token can exist once; salted (sandbox-only) rows allow a reused test token.
+func tokenHash(token, salt string) []byte {
+	if salt == "" {
+		return secure.HashSecret(token)
+	}
+	return secure.HashSecret(token + "|" + salt)
+}
+
+func (s *Service) insertTokenSalted(ctx context.Context, tx pgx.Tx, tenant, meter, user uuid.UUID, source string, vendID *uuid.UUID, token, salt string, wh int64, note string, sandbox bool) (uuid.UUID, error) {
 	token = normalizeToken(token)
 	enc, err := s.Keys.Encrypt([]byte(token))
 	if err != nil {
@@ -927,7 +945,7 @@ func (s *Service) insertToken(ctx context.Context, tx pgx.Tx, tenant, meter, use
 	}
 	var id uuid.UUID
 	err = tx.QueryRow(ctx, `INSERT INTO energy_tokens (tenant_id, meter_id, issued_to_user_id, source, vend_transaction_id, token_enc, token_hash, token_last4, energy_wh, note, sandbox)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, tenant, meter, user, source, vendID, enc, secure.HashSecret(token), token[len(token)-4:], wh, note, sandbox).Scan(&id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, tenant, meter, user, source, vendID, enc, tokenHash(token, salt), token[len(token)-4:], wh, note, sandbox).Scan(&id)
 	return id, err
 }
 
@@ -1002,6 +1020,15 @@ func (s *Service) RedeemToken(ctx context.Context, p auth.Principal, meterID uui
 		var sandbox bool
 		err = tx.QueryRow(ctx, `SELECT id, meter_id, status, energy_wh, sandbox FROM energy_tokens WHERE tenant_id=$1 AND token_hash=$2 FOR UPDATE`,
 			p.TenantID, secure.HashSecret(token)).Scan(&id, &tokMeter, &status, &wh, &sandbox)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (status == "delivered" || tokMeter != meterID)) {
+			// Sandbox tokens may repeat; match the oldest undelivered one on this meter.
+			if sid, ok, ferr := s.findSandboxToken(ctx, tx, p.TenantID, meterID, token); ferr != nil {
+				return ferr
+			} else if ok {
+				err = tx.QueryRow(ctx, `SELECT id, meter_id, status, energy_wh, sandbox FROM energy_tokens WHERE id=$1 FOR UPDATE`, sid).
+					Scan(&id, &tokMeter, &status, &wh, &sandbox)
+			}
+		}
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && tokMeter != meterID) {
 			return errf(http.StatusBadRequest, "invalid_token", "token is invalid for this meter")
 		}
@@ -1032,7 +1059,7 @@ func (s *Service) RedeemToken(ctx context.Context, p auth.Principal, meterID uui
 			out.Status, out.Simulated = "submitted", false
 			out.Message = "Token sent to your meter. Your balance updates as soon as the meter confirms it."
 		} else if sandbox {
-			if _, err := s.confirmTokenDelivery(ctx, tx, p.TenantID, meterID, token); err != nil {
+			if _, err := s.confirmTokenID(ctx, tx, p.TenantID, meterID, id); err != nil {
 				return err
 			}
 			out.Status, out.Simulated = "delivered", true
@@ -1059,13 +1086,53 @@ func (s *Service) RedeemToken(ctx context.Context, p auth.Principal, meterID uui
 // confirmTokenDelivery credits the platform energy ledger exactly once.
 func (s *Service) confirmTokenDelivery(ctx context.Context, tx pgx.Tx, tenant, meterID uuid.UUID, token string) (int, error) {
 	var id uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT id FROM energy_tokens WHERE tenant_id=$1 AND meter_id=$2 AND token_hash=$3 AND status IN ('issued','submitted')`,
+		tenant, meterID, secure.HashSecret(token)).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		sid, ok, ferr := s.findSandboxToken(ctx, tx, tenant, meterID, token)
+		if ferr != nil || !ok {
+			return 0, ferr
+		}
+		id, err = sid, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return s.confirmTokenID(ctx, tx, tenant, meterID, id)
+}
+
+// findSandboxToken matches a reused sandbox token by decrypting this meter's
+// undelivered sandbox tokens (a handful at most). Never used for live tokens.
+func (s *Service) findSandboxToken(ctx context.Context, tx pgx.Tx, tenant, meterID uuid.UUID, token string) (uuid.UUID, bool, error) {
+	rows, err := tx.Query(ctx, `SELECT id, token_enc FROM energy_tokens WHERE tenant_id=$1 AND meter_id=$2 AND sandbox
+		AND status IN ('issued','submitted') AND token_last4=$3 ORDER BY created_at LIMIT 50`, tenant, meterID, token[max(0, len(token)-4):])
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var enc []byte
+		if err := rows.Scan(&id, &enc); err != nil {
+			return uuid.Nil, false, err
+		}
+		if plain, err := s.Keys.Decrypt(enc); err == nil && string(plain) == token {
+			return id, true, nil
+		}
+	}
+	return uuid.Nil, false, rows.Err()
+}
+
+// confirmTokenID marks one token delivered and credits the energy ledger exactly once.
+func (s *Service) confirmTokenID(ctx context.Context, tx pgx.Tx, tenant, meterID, tokenID uuid.UUID) (int, error) {
+	var id uuid.UUID
 	var wh int64
 	var vendID *uuid.UUID
 	var user uuid.UUID
 	var source string
 	err := tx.QueryRow(ctx, `UPDATE energy_tokens SET status='delivered', delivered_at=now()
-		WHERE tenant_id=$1 AND meter_id=$2 AND token_hash=$3 AND status IN ('issued','submitted')
-		RETURNING id, energy_wh, vend_transaction_id, issued_to_user_id, source`, tenant, meterID, secure.HashSecret(token)).Scan(&id, &wh, &vendID, &user, &source)
+		WHERE tenant_id=$1 AND meter_id=$2 AND id=$3 AND status IN ('issued','submitted')
+		RETURNING id, energy_wh, vend_transaction_id, issued_to_user_id, source`, tenant, meterID, tokenID).Scan(&id, &wh, &vendID, &user, &source)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}

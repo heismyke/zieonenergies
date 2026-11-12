@@ -383,15 +383,7 @@ func (s *Service) HandleAck(ctx context.Context, p auth.Principal, data []byte) 
 }
 
 func (s *Service) confirmTokenByID(ctx context.Context, tx pgx.Tx, tenant, meter, tokenID uuid.UUID) error {
-	var enc []byte
-	if err := tx.QueryRow(ctx, `SELECT token_enc FROM energy_tokens WHERE id=$1 AND meter_id=$2`, tokenID, meter).Scan(&enc); err != nil {
-		return notFoundIfNoRows(err)
-	}
-	plain, err := s.Keys.Decrypt(enc)
-	if err != nil {
-		return err
-	}
-	_, err = s.confirmTokenDelivery(ctx, tx, tenant, meter, string(plain))
+	_, err := s.confirmTokenID(ctx, tx, tenant, meter, tokenID)
 	return err
 }
 
