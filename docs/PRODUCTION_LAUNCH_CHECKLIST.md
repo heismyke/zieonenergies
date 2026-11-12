@@ -44,9 +44,9 @@
 ## Deployment (pilot host)
 ```bash
 # on the server, in ~/apps/zieon (git checkout of this repo)
-cp deploy/env.production.example .env.production   # fill in, chmod 600 (done by the deploy step)
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml exec api /app/api seed-pilot   # non-production only
+cp deploy/env.production.example .env.production && chmod 600 .env.production   # fill in secrets
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+docker compose --env-file .env.production -f docker-compose.prod.yml exec api /app/api seed-pilot   # non-production only
 curl https://zieon-api.198.199.65.142.sslip.io/healthz
 ```
 Caddy (`~/apps/reverse-proxy/Caddyfile`):
@@ -60,9 +60,9 @@ zieon-api.198.199.65.142.sslip.io {
 - **Backup** (nightly cron): `deploy/backup.sh` writes `backups/zieon-<ts>.dump` (pg_dump custom format, mode 600). **Copy off-host (not yet configured).**
 - **Restore:**
   ```bash
-  docker compose -f docker-compose.prod.yml stop api
-  docker compose -f docker-compose.prod.yml exec -T db pg_restore -U zieon -d zieon --clean --if-exists < backups/zieon-<ts>.dump
-  docker compose -f docker-compose.prod.yml start api
+  docker compose --env-file .env.production -f docker-compose.prod.yml stop api
+  docker compose --env-file .env.production -f docker-compose.prod.yml exec -T db pg_restore -U zieon -d zieon --clean --if-exists < backups/zieon-<ts>.dump
+  docker compose --env-file .env.production -f docker-compose.prod.yml start api
   ```
 - **Schema rollback in production = restore.** `migrate-down` is refused when `APP_ENV=production`.
 
