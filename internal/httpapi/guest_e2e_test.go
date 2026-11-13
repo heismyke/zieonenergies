@@ -197,3 +197,29 @@ func TestSignUpClaimsGuestRecord(t *testing.T) {
 	// Once claimed, the email is taken.
 	e.must(e.do("POST", "/v1/auth/register", "", map[string]string{"email": "guest@example.com", "password": "another-pass-1"}, h), 409)
 }
+
+// BuyPower-style wallet: fund it, then buy from the balance.
+func TestAccountOrderFromWallet(t *testing.T) {
+	e := newEnv(t, false)
+	agg := &fakeAggregator{settled: map[string]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(agg.handler))
+	defer srv.Close()
+	e.svc.Vending["vtpass"] = vending.NewVTpass(srv.URL+"/sandbox", "AK", "PK", "SK", "08011111111")
+	p := e.provision("zen", nil, nil)
+	c := e.customer(p.Slug, "wallet@example.com")
+	order := func(amount int64, method string) resp {
+		return e.do("POST", "/v1/orders", c.Token, map[string]any{"provider_code": "IKEDC", "meter_number": "1111111111111",
+			"amount_kobo": amount, "payment_method": method}, idem(uuid.NewString()))
+	}
+	if r := order(200000, "wallet"); r.Status < 400 {
+		t.Fatalf("an empty wallet cannot pay: %s", r.Raw)
+	}
+	e.fund(c, 300000)
+	if o := e.must(order(200000, "wallet"), 201); o.str("status") != "vended" || len(o.str("token")) != 20 {
+		t.Fatalf("wallet order: %s", o.Raw)
+	}
+	if got := e.walletKobo(c); got != 100000 {
+		t.Fatalf("wallet after purchase: %v", got)
+	}
+	e.must(order(200000, "crypto"), 400)
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -397,6 +398,13 @@ func (s *Server) fundWallet(w http.ResponseWriter, r *http.Request) error {
 	}
 	if err := decodeBytes(body, &in); err != nil {
 		return err
+	}
+	// Paystack may only send the buyer back to an approved site.
+	if u, err := url.Parse(in.CallbackURL); in.CallbackURL != "" && (err != nil || !s.originAllowed(r.Context(), u.Scheme+"://"+u.Host)) {
+		in.CallbackURL = ""
+	}
+	if o := strings.TrimRight(r.Header.Get("Origin"), "/"); in.CallbackURL == "" && o != "" && s.originAllowed(r.Context(), o) {
+		in.CallbackURL = o + "/wallet?funded=1"
 	}
 	return s.idempotent(w, r, c, body, func() (int, any, error) {
 		res, err := s.svc.FundWallet(r.Context(), c.P, c.Tenant, in.AmountKobo, in.Method, in.CallbackURL)

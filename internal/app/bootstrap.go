@@ -8,10 +8,10 @@ import (
 )
 
 // BuyOnlyFeatures is the production product: buy DisCo electricity with a
-// quick sign-up, like BuyPower. Dashboard features stay off until launched.
+// quick sign-up and an in-house wallet, like BuyPower. Dashboard features stay off until launched.
 var BuyOnlyFeatures = map[string]bool{
 	"guest_checkout": true, "guest_orders": false, "card_payments": true, "external_meters": true,
-	"wallet": false, "bank_transfer": false, "spark_share": false, "auto_topup": false, "benefits": false,
+	"wallet": true, "bank_transfer": false, "spark_share": false, "auto_topup": false, "benefits": false,
 	"subscriptions": false, "support_chat": false, "properties": false, "energy_exchange": false, "crypto_payments": false,
 }
 

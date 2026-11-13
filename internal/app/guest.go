@@ -207,7 +207,9 @@ type OrderInput struct {
 	MeterNumber  string `json:"meter_number"`
 	MeterType    string `json:"meter_type"`
 	AmountKobo   int64  `json:"amount_kobo"`
-	ReturnURL    string `json:"-"`
+	// "checkout" (card, transfer or USSD; the default) or "wallet".
+	PaymentMethod string `json:"payment_method"`
+	ReturnURL     string `json:"-"`
 }
 
 // CreateOrder is the account version of the guest order: same checks, the
@@ -215,6 +217,15 @@ type OrderInput struct {
 func (s *Service) CreateOrder(ctx context.Context, p auth.Principal, t Tenant, in OrderInput) (GuestOrder, error) {
 	if !t.Enabled("external_meters") {
 		return GuestOrder{}, ErrFeatureOff
+	}
+	if in.PaymentMethod == "" {
+		in.PaymentMethod = "checkout"
+	}
+	if in.PaymentMethod != "checkout" && in.PaymentMethod != "wallet" {
+		return GuestOrder{}, errf(http.StatusBadRequest, "invalid_payment_method", "payment_method must be checkout or wallet")
+	}
+	if err := s.checkMethod(t, in.PaymentMethod); err != nil {
+		return GuestOrder{}, err
 	}
 	m, err := s.checkOrder(ctx, t, &in.ProviderCode, in.MeterNumber, &in.MeterType, in.AmountKobo)
 	if err != nil {
@@ -229,7 +240,7 @@ func (s *Service) CreateOrder(ctx context.Context, p auth.Principal, t Tenant, i
 		return GuestOrder{}, err
 	}
 	ret := in.ReturnURL
-	pu, err := s.purchaseWithHook(ctx, p, t, PurchaseInput{MeterID: meterID, AmountKobo: in.AmountKobo, PaymentMethod: "checkout"},
+	pu, err := s.purchaseWithHook(ctx, p, t, PurchaseInput{MeterID: meterID, AmountKobo: in.AmountKobo, PaymentMethod: in.PaymentMethod},
 		func(ctx context.Context, tx pgx.Tx, vendID uuid.UUID) (string, error) {
 			if ret == "" {
 				return "", nil

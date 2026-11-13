@@ -21,7 +21,7 @@ var KnownFeatures = map[string]bool{
 	"wallet": true, "spark_share": true, "external_meters": true, "auto_topup": true,
 	"card_payments": true, "bank_transfer": true, "crypto_payments": false, "benefits": false,
 	"energy_exchange": false, "subscriptions": true, "support_chat": true, "properties": false,
-	"guest_checkout": true, // public buy page: DisCo list, meter lookup, account orders
+	"guest_checkout": true,  // public buy page: DisCo list, meter lookup, account orders
 	"guest_orders":   false, // buying without an account (order key instead of a login)
 }
 
