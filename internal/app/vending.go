@@ -944,6 +944,82 @@ func (s *Service) Wallet(ctx context.Context, p auth.Principal) (Wallet, error) 
 	return w, err
 }
 
+// WalletEntry is one movement on the customer's wallet. OrderID is set for
+// purchases and refunds (the ledger reference is the order's id).
+type WalletEntry struct {
+	ID           int64      `json:"id"`
+	Kind         string     `json:"kind"`
+	AmountKobo   int64      `json:"amount_kobo"`
+	BalanceAfter int64      `json:"balance_after_kobo"`
+	Memo         string     `json:"memo"`
+	OrderID      *uuid.UUID `json:"order_id,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+// WalletMonth totals money in and out for one calendar month (Lagos time).
+type WalletMonth struct {
+	Month   string `json:"month"` // YYYY-MM
+	InKobo  int64  `json:"in_kobo"`
+	OutKobo int64  `json:"out_kobo"`
+}
+
+type WalletActivity struct {
+	Entries []WalletEntry `json:"entries"`
+	Months  []WalletMonth `json:"months"` // the last six months, oldest first, empty months included
+}
+
+// WalletActivity lists the latest wallet movements and six months of totals.
+func (s *Service) WalletActivity(ctx context.Context, p auth.Principal, limit int) (WalletActivity, error) {
+	out := WalletActivity{Entries: []WalletEntry{}, Months: []WalletMonth{}}
+	err := s.DB.Tenant(ctx, p.TenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT id, kind, amount_kobo, balance_after, memo, reference, created_at FROM ledger_entries
+			WHERE account_type=$1 AND account_id=$2 ORDER BY id DESC LIMIT $3`, AcctWallet, p.UserID, limit)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var e WalletEntry
+			var ref string
+			if err := rows.Scan(&e.ID, &e.Kind, &e.AmountKobo, &e.BalanceAfter, &e.Memo, &ref, &e.CreatedAt); err != nil {
+				rows.Close()
+				return err
+			}
+			if e.Kind == "purchase" || e.Kind == "refund" {
+				if id, err := uuid.Parse(ref); err == nil {
+					e.OrderID = &id
+				}
+			}
+			out.Entries = append(out.Entries, e)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows, err = tx.Query(ctx, `WITH m AS (
+				SELECT generate_series(date_trunc('month', now() AT TIME ZONE 'Africa/Lagos') - interval '5 months',
+					date_trunc('month', now() AT TIME ZONE 'Africa/Lagos'), interval '1 month') AS month)
+			SELECT to_char(m.month, 'YYYY-MM'),
+				coalesce(sum(l.amount_kobo) FILTER (WHERE l.amount_kobo > 0), 0)::bigint,
+				coalesce(-sum(l.amount_kobo) FILTER (WHERE l.amount_kobo < 0), 0)::bigint
+			FROM m LEFT JOIN ledger_entries l ON l.account_type=$1 AND l.account_id=$2
+				AND date_trunc('month', l.created_at AT TIME ZONE 'Africa/Lagos') = m.month
+			GROUP BY m.month ORDER BY m.month`, AcctWallet, p.UserID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var wm WalletMonth
+			if err := rows.Scan(&wm.Month, &wm.InKobo, &wm.OutKobo); err != nil {
+				return err
+			}
+			out.Months = append(out.Months, wm)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 type FundResult struct {
 	Payment PaymentInfo `json:"payment"`
 	Wallet  Wallet      `json:"wallet"`

@@ -56,6 +56,7 @@ func (s *Server) routes() {
 	s.handle("POST /v1/quotes", s.quote)
 	s.handle("GET /v1/wallet", s.wallet)
 	s.handle("POST /v1/wallet/fund", s.fundWallet)
+	s.handle("GET /v1/wallet/activity", s.walletActivity)
 	s.handle("GET /v1/meters", s.listMeters)
 	s.handle("POST /v1/meters", s.linkMeter)
 	s.handle("POST /v1/meters/validate", s.validateMeter)
@@ -380,6 +381,18 @@ func (s *Server) wallet(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return writeJSON(w, 200, wl)
+}
+
+func (s *Server) walletActivity(w http.ResponseWriter, r *http.Request) error {
+	c, err := s.customer(r)
+	if err != nil {
+		return err
+	}
+	a, err := s.svc.WalletActivity(r.Context(), c.P, queryInt(r, "limit", 30, 100))
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, 200, a)
 }
 
 func (s *Server) fundWallet(w http.ResponseWriter, r *http.Request) error {

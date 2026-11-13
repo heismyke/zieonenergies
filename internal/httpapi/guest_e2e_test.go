@@ -223,6 +223,25 @@ func TestAccountOrderFromWallet(t *testing.T) {
 		t.Fatalf("wallet after purchase: %v", got)
 	}
 	e.must(order(200000, "crypto"), 400)
+
+	// The wallet page's history: newest first, the purchase linked to its order.
+	a := e.must(e.do("GET", "/v1/wallet/activity", c.Token, nil), 200)
+	entries := a.list("entries")
+	if len(entries) != 2 {
+		t.Fatalf("wallet activity: %s", a.Raw)
+	}
+	buy, top := entries[0].(map[string]any), entries[1].(map[string]any)
+	if buy["kind"] != "purchase" || buy["amount_kobo"] != float64(-200000) || buy["balance_after_kobo"] != float64(100000) || buy["order_id"] == nil {
+		t.Fatalf("purchase entry: %v", buy)
+	}
+	if top["kind"] != "wallet_fund" || top["amount_kobo"] != float64(300000) || top["order_id"] != nil {
+		t.Fatalf("top-up entry: %v", top)
+	}
+	months := a.list("months")
+	last := months[len(months)-1].(map[string]any)
+	if len(months) != 6 || last["in_kobo"] != float64(300000) || last["out_kobo"] != float64(200000) {
+		t.Fatalf("monthly totals: %v", months)
+	}
 }
 
 // A buyer back from the payment page sees the token without the webhook:
