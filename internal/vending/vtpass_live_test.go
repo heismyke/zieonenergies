@@ -27,6 +27,12 @@ func TestVTpassSandboxContract(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
+	cat, err := v.Catalog(ctx)
+	if err != nil || len(cat) < 10 || cat["IKEDC"].MinKobo <= 0 || cat["IKEDC"].ImageURL == "" {
+		t.Fatalf("catalogue: %d entries, IKEDC %+v, %v", len(cat), cat["IKEDC"], err)
+	}
+	t.Logf("catalogue: %d DisCos, IKEDC min ₦%d", len(cat), cat["IKEDC"].MinKobo/100)
+
 	info, err := v.ValidateMeter(ctx, "IKEDC", "1111111111111", "prepaid")
 	if err != nil || info.CustomerName == "" || !info.CanVend {
 		t.Fatalf("verify test meter: %+v %v", info, err)

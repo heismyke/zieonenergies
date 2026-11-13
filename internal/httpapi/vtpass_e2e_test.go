@@ -28,6 +28,8 @@ func (f *fakeAggregator) handler(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	switch strings.TrimPrefix(r.URL.Path, "/sandbox") {
+	case "/api/services":
+		_, _ = w.Write([]byte(`{"content":[{"serviceID":"ikeja-electric","image":"https://img/ikedc.jpg","minimium_amount":"500","maximum_amount":"400000"}]}`))
 	case "/api/merchant-verify":
 		if n := b["billersCode"]; n == "1111111111111" || n == "2010000000000" || n == "3000000000000" {
 			_, _ = w.Write([]byte(`{"code":"000","content":{"Customer_Name":"TESTMETER1","Address":"ABULE EGBA","Meter_Type":"PREPAID","Can_Vend":"yes"}}`))

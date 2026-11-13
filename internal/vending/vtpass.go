@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,6 +30,10 @@ type VTpass struct {
 	// FallbackPhone is sent when the customer has no phone on file (VTpass requires one).
 	FallbackPhone string
 	HTTP          *http.Client
+
+	catMu    sync.Mutex
+	catalog  map[string]CatalogEntry
+	catUntil time.Time
 }
 
 func NewVTpass(baseURL, apiKey, publicKey, secretKey, fallbackPhone string) *VTpass {
@@ -244,6 +249,59 @@ func (v *VTpass) ValidateMeter(ctx context.Context, providerCode, meterNumber, m
 	}
 	return MeterInfo{CustomerName: c.CustomerName, Address: c.Address, MeterType: strings.ToLower(c.MeterType),
 		CanVend: c.CanVend == "" || strings.EqualFold(c.CanVend, "yes")}, nil
+}
+
+// Catalog returns VTpass's electricity services keyed by our DisCo code,
+// cached for an hour (GET /api/services?identifier=electricity-bill).
+func (v *VTpass) Catalog(ctx context.Context) (map[string]CatalogEntry, error) {
+	v.catMu.Lock()
+	defer v.catMu.Unlock()
+	if v.catalog != nil && time.Now().Before(v.catUntil) {
+		return v.catalog, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.BaseURL+"/api/services?identifier=electricity-bill", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("api-key", v.APIKey)
+	req.Header.Set("public-key", v.PublicKey)
+	res, err := v.HTTP.Do(req)
+	if err != nil {
+		return v.catalog, fmt.Errorf("vtpass services: %w", err)
+	}
+	defer res.Body.Close()
+	var out struct {
+		Content []struct {
+			ServiceID string `json:"serviceID"`
+			Image     string `json:"image"`
+			Min       string `json:"minimium_amount"` // sic: VTpass's spelling
+			Max       string `json:"maximum_amount"`
+		} `json:"content"`
+	}
+	if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&out) != nil {
+		return v.catalog, fmt.Errorf("vtpass services: HTTP %d", res.StatusCode)
+	}
+	byService := map[string]string{}
+	for code, sid := range ServiceIDs {
+		byService[sid] = code
+	}
+	cat := map[string]CatalogEntry{}
+	for _, s := range out.Content {
+		code, ok := byService[s.ServiceID]
+		if !ok {
+			continue
+		}
+		e := CatalogEntry{ImageURL: s.Image}
+		if n, err := strconv.ParseFloat(strings.TrimSpace(s.Min), 64); err == nil {
+			e.MinKobo = int64(n * 100)
+		}
+		if n, err := strconv.ParseFloat(strings.TrimSpace(s.Max), 64); err == nil {
+			e.MaxKobo = int64(n * 100)
+		}
+		cat[code] = e
+	}
+	v.catalog, v.catUntil = cat, time.Now().Add(time.Hour)
+	return cat, nil
 }
 
 func (v *VTpass) post(ctx context.Context, path string, body any, out any) error {

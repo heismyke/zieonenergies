@@ -45,6 +45,19 @@ type MeterInfo struct {
 	CanVend      bool
 }
 
+// CatalogEntry is a provider's own data about one DisCo: its logo and the
+// purchase limits the DisCo enforces (below the minimum, a vend fails).
+type CatalogEntry struct {
+	ImageURL string
+	MinKobo  int64
+	MaxKobo  int64
+}
+
+// Cataloger is implemented by providers that publish per-DisCo details.
+type Cataloger interface {
+	Catalog(ctx context.Context) (map[string]CatalogEntry, error)
+}
+
 // Validator is implemented by providers that can look a meter up at the DisCo.
 type Validator interface {
 	ValidateMeter(ctx context.Context, providerCode, meterNumber, meterType string) (MeterInfo, error)

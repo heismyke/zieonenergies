@@ -15,12 +15,22 @@ import (
 func fakeVTpass(t *testing.T, pay, requery func(map[string]any) string) *VTpass {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("api-key") != "AK" || r.Header.Get("secret-key") != "SK" {
+		// VTpass: POST uses api-key + secret-key, GET uses api-key + public-key.
+		if r.Header.Get("api-key") != "AK" || (r.Method == http.MethodPost && r.Header.Get("secret-key") != "SK") {
 			w.WriteHeader(401)
 			return
 		}
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		if r.Method == http.MethodGet && strings.TrimPrefix(r.URL.Path, "/sandbox") == "/api/services" {
+			if r.Header.Get("public-key") != "PK" {
+				w.WriteHeader(401)
+				return
+			}
+			_, _ = w.Write([]byte(`{"content":[{"serviceID":"ibadan-electric","image":"https://img/ibedc.jpg","minimium_amount":"2000","maximum_amount":"500000"},
+				{"serviceID":"unknown-thing","image":"x","minimium_amount":"1","maximum_amount":"2"}]}`))
+			return
+		}
 		switch strings.TrimPrefix(r.URL.Path, "/sandbox") {
 		case "/api/pay":
 			_, _ = w.Write([]byte(pay(body)))
@@ -145,5 +155,17 @@ func TestVTpassValidateMeter(t *testing.T) {
 	bad := NewVTpass(v.BaseURL, "AK", "PK", "WRONG", "")
 	if _, err := bad.ValidateMeter(context.Background(), "IKEDC", "1111111111111", "prepaid"); err == nil {
 		t.Fatal("bad credentials must error")
+	}
+}
+
+func TestVTpassCatalog(t *testing.T) {
+	v := fakeVTpass(t, nil, nil)
+	cat, err := v.Catalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := cat["IBEDC"]
+	if !ok || e.MinKobo != 200000 || e.MaxKobo != 50000000 || e.ImageURL != "https://img/ibedc.jpg" || len(cat) != 1 {
+		t.Fatalf("catalog: %+v", cat)
 	}
 }

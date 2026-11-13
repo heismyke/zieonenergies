@@ -26,6 +26,7 @@ import (
 type Disco struct {
 	ProviderCode    string `json:"provider_code"`
 	ProviderName    string `json:"provider_name"`
+	LogoURL         string `json:"logo_url"`
 	MinPurchaseKobo int64  `json:"min_purchase_kobo"`
 	MaxPurchaseKobo int64  `json:"max_purchase_kobo"`
 	ServiceFeeKobo  int64  `json:"service_fee_kobo"`
@@ -44,7 +45,8 @@ func (s *Service) PublicDiscos(ctx context.Context, t Tenant) ([]Disco, error) {
 		if tr.ProviderCode == "ZIEON" {
 			continue
 		}
-		out = append(out, Disco{ProviderCode: tr.ProviderCode, ProviderName: tr.ProviderName,
+		logo := s.withDiscoLimits(ctx, &tr)
+		out = append(out, Disco{ProviderCode: tr.ProviderCode, ProviderName: tr.ProviderName, LogoURL: logo,
 			MinPurchaseKobo: tr.MinPurchaseKobo, MaxPurchaseKobo: tr.MaxPurchaseKobo, ServiceFeeKobo: tr.ServiceFeeKobo})
 	}
 	return out, nil
@@ -141,11 +143,25 @@ func (s *Service) CreateGuestOrder(ctx context.Context, t Tenant, in GuestOrderI
 	if !phoneRe.MatchString(in.Phone) {
 		return GuestOrder{}, errf(http.StatusBadRequest, "invalid_phone", "enter a valid phone number")
 	}
+	in.ProviderCode = strings.ToUpper(strings.TrimSpace(in.ProviderCode))
+	// Reject amounts the DisCo would refuse before verifying or charging anything.
+	ts, err := s.Tariffs(ctx, t.ID)
+	if err != nil {
+		return GuestOrder{}, err
+	}
+	for _, tr := range ts {
+		if tr.ProviderCode == in.ProviderCode {
+			s.withDiscoLimits(ctx, &tr)
+			if in.AmountKobo < tr.MinPurchaseKobo || in.AmountKobo > tr.MaxPurchaseKobo {
+				return GuestOrder{}, errf(http.StatusBadRequest, "invalid_amount", "for %s the amount must be between ₦%s and ₦%s",
+					tr.ProviderName, nairaStr(tr.MinPurchaseKobo), nairaStr(tr.MaxPurchaseKobo))
+			}
+		}
+	}
 	m, err := s.VerifyPublicMeter(ctx, t, in.ProviderCode, in.MeterNumber, in.MeterType)
 	if err != nil {
 		return GuestOrder{}, err
 	}
-	in.ProviderCode = strings.ToUpper(strings.TrimSpace(in.ProviderCode))
 
 	key := "zgo_" + secure.RandomToken(24)
 	var p auth.Principal

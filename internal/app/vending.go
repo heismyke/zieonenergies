@@ -102,6 +102,41 @@ func computeQuote(t Tariff, amount int64) (Quote, error) {
 	return q, nil
 }
 
+// withDiscoLimits narrows a tariff to the DisCo's own purchase limits from the
+// aggregator's catalogue and returns the DisCo logo URL (empty if unknown).
+// If the catalogue is unavailable the tariff is left as configured.
+func (s *Service) withDiscoLimits(ctx context.Context, t *Tariff) string {
+	c, ok := s.Vending["vtpass"].(vending.Cataloger)
+	if !ok {
+		return ""
+	}
+	cat, err := c.Catalog(ctx)
+	if err != nil && cat == nil {
+		s.Log.Warn("disco catalogue unavailable", "err", err)
+		return ""
+	}
+	e, ok := cat[t.ProviderCode]
+	if !ok {
+		return ""
+	}
+	if e.MinKobo > t.MinPurchaseKobo {
+		t.MinPurchaseKobo = e.MinKobo
+	}
+	if e.MaxKobo > 0 && e.MaxKobo < t.MaxPurchaseKobo {
+		t.MaxPurchaseKobo = e.MaxKobo
+	}
+	return e.ImageURL
+}
+
+func nairaStr(kobo int64) string {
+	n := kobo / 100
+	s := fmt.Sprint(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
+}
+
 func tariffFor(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, provider string) (Tariff, error) {
 	t, err := scanTariff(tx.QueryRow(ctx, `SELECT `+tariffCols+` FROM tariffs WHERE tenant_id=$1 AND provider_code=$2 AND active`, tenant, provider))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -283,6 +318,9 @@ func (s *Service) purchaseWithHook(ctx context.Context, p auth.Principal, t Tena
 		tariff, err := tariffFor(ctx, tx, p.TenantID, m.ProviderCode)
 		if err != nil {
 			return err
+		}
+		if m.Ownership == "external" {
+			s.withDiscoLimits(ctx, &tariff)
 		}
 		q, err := computeQuote(tariff, in.AmountKobo)
 		if err != nil {

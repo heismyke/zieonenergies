@@ -30,6 +30,14 @@ func TestGuestCheckout(t *testing.T) {
 	if len(ds) < 10 {
 		t.Fatalf("expected the DisCo catalogue, got %d", len(ds))
 	}
+	for _, d := range ds {
+		if m := d.(map[string]any); m["provider_code"] == "IKEDC" {
+			// The DisCo's own minimum (₦500) and logo come from the aggregator catalogue.
+			if m["min_purchase_kobo"] != 50000.0 || m["max_purchase_kobo"] != 40000000.0 || m["logo_url"] != "https://img/ikedc.jpg" {
+				t.Fatalf("IKEDC catalogue not applied: %v", m)
+			}
+		}
+	}
 
 	v := e.must(e.do("POST", "/v1/public/meters/verify", "", map[string]string{"provider_code": "IKEDC", "meter_number": "1111111111111"}, h), 200)
 	if v.str("customer_name") != "TESTMETER1" {
@@ -40,6 +48,10 @@ func TestGuestCheckout(t *testing.T) {
 	order := func(meter string, amount int64, opts ...reqOpt) resp {
 		return e.do("POST", "/v1/public/orders", "", map[string]any{"provider_code": "IKEDC", "meter_number": meter,
 			"amount_kobo": amount, "email": "buyer@example.com", "phone": "08031234567"}, append([]reqOpt{h, idem(uuid.NewString())}, opts...)...)
+	}
+	// Below the DisCo's own minimum: refused before verification or payment.
+	if r := e.must(order("1111111111111", 40000), 400); !strings.Contains(r.str("error", "message"), "between") {
+		t.Fatalf("below-minimum message: %s", r.Raw)
 	}
 	// Wrong meter: refused before any payment is taken.
 	e.must(order("9999999999", 200000), 404)
