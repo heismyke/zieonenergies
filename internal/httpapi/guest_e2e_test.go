@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/heismyke/zieonenergies/internal/payments"
 	"github.com/heismyke/zieonenergies/internal/vending"
 )
 
@@ -223,3 +224,44 @@ func TestAccountOrderFromWallet(t *testing.T) {
 	}
 	e.must(order(200000, "crypto"), 400)
 }
+
+// A buyer back from the payment page sees the token without the webhook:
+// reading the order asks the provider, and only a confirmed success counts.
+func TestOrderConfirmsOnReturn(t *testing.T) {
+	e := newEnv(t, true) // payments wait for confirmation, like Paystack
+	agg := &fakeAggregator{settled: map[string]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(agg.handler))
+	defer srv.Close()
+	e.svc.Vending["vtpass"] = vending.NewVTpass(srv.URL+"/sandbox", "AK", "PK", "SK", "08011111111")
+	ps := &namedPay{e.pay, "paystack"}
+	e.svc.Payments["paystack"] = ps
+	p := e.provision("zen", nil, nil)
+	c := e.customer(p.Slug, "return@example.com")
+	o := e.must(e.do("POST", "/v1/orders", c.Token, map[string]any{"provider_code": "IKEDC", "meter_number": "1111111111111", "amount_kobo": 200000},
+		idem(uuid.NewString())), 201)
+	if o.str("status") != "payment_pending" {
+		t.Fatalf("order must await payment: %s", o.Raw)
+	}
+	// Not paid yet: reading the order leaves it pending.
+	if g := e.must(e.do("GET", "/v1/orders/"+o.str("id"), c.Token, nil), 200); g.str("status") != "payment_pending" {
+		t.Fatalf("unpaid order changed: %s", g.Raw)
+	}
+	// The buyer completes the checkout; no webhook arrives.
+	var ref string
+	_ = e.svc.DB.Pool.QueryRow(context.Background(), `SELECT reference FROM payments WHERE vend_transaction_id=$1`, o.str("id")).Scan(&ref)
+	e.pay.mu.Lock()
+	e.pay.verified[ref] = payments.Verification{Status: "succeeded", AmountKobo: 200000}
+	e.pay.mu.Unlock()
+	g := e.must(e.do("GET", "/v1/orders/"+o.str("id"), c.Token, nil), 200)
+	if g.str("status") != "vended" || len(g.str("token")) != 20 {
+		t.Fatalf("order must be confirmed on return: %s", g.Raw)
+	}
+}
+
+// namedPay is the deferred test provider under another name (e.g. "paystack").
+type namedPay struct {
+	*deferredPay
+	name string
+}
+
+func (n *namedPay) Name() string { return n.name }

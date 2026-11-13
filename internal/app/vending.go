@@ -930,6 +930,8 @@ type Wallet struct {
 }
 
 func (s *Service) Wallet(ctx context.Context, p auth.Principal) (Wallet, error) {
+	// A wallet top-up the buyer just paid for shows without waiting for the webhook.
+	s.CheckPendingPayments(ctx, p.TenantID, p.UserID)
 	w := Wallet{Currency: "NGN"}
 	err := s.DB.Tenant(ctx, p.TenantID, func(tx pgx.Tx) error {
 		var err error

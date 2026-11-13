@@ -177,6 +177,49 @@ func (s *Service) ReconcilePayments(ctx context.Context) error {
 	return nil
 }
 
+// CheckPendingPayments asks the payment provider about a buyer's recent
+// pending checkouts, so someone returning from the payment page sees the
+// result straight away instead of waiting for the webhook (or the 10-minute
+// reconciliation). Only a confirmed success acts here: an unpaid checkout
+// reads "abandoned" while the buyer is still paying, and failures are left to
+// ReconcilePayments. ConfirmPayment is idempotent, so repeats are harmless.
+func (s *Service) CheckPendingPayments(ctx context.Context, tenantID, userID uuid.UUID) {
+	type pending struct{ ref, provider string }
+	var list []pending
+	_ = s.DB.Tenant(ctx, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT reference, provider FROM payments WHERE user_id=$1 AND status='pending'
+			AND provider <> 'sandbox' AND created_at > now() - interval '2 hours' ORDER BY created_at DESC LIMIT 3`, userID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var p pending
+			if err := rows.Scan(&p.ref, &p.provider); err != nil {
+				return err
+			}
+			list = append(list, p)
+		}
+		return rows.Err()
+	})
+	for _, p := range list {
+		pp := s.Payments[p.provider]
+		if pp == nil {
+			continue
+		}
+		v, err := pp.Verify(ctx, p.ref)
+		if err != nil {
+			s.Log.Warn("payment check", "ref", p.ref, "err", err)
+			continue
+		}
+		if v.Status == "succeeded" {
+			if err := s.ConfirmPayment(ctx, p.provider, p.ref, v.AmountKobo); err != nil {
+				s.Log.Error("payment check confirm", "ref", p.ref, "err", err)
+			}
+		}
+	}
+}
+
 // RunAutoTopups executes queued auto top-ups from the customer's wallet.
 func (s *Service) RunAutoTopups(ctx context.Context) error {
 	type job struct {

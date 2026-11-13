@@ -253,14 +253,23 @@ func (s *Service) CreateOrder(ctx context.Context, p auth.Principal, t Tenant, i
 	return s.Order(ctx, p, t, pu.ID)
 }
 
-// Order returns one of the signed-in buyer's own orders.
+// Order returns one of the signed-in buyer's own orders. An order still
+// waiting for payment is checked with the payment provider first.
 func (s *Service) Order(ctx context.Context, p auth.Principal, t Tenant, id uuid.UUID) (GuestOrder, error) {
-	var o GuestOrder
-	err := s.DB.Tenant(ctx, t.ID, func(tx pgx.Tx) error {
-		var err error
-		o, err = s.orderView(ctx, tx, t, id, p.UserID)
-		return err
-	})
+	load := func() (GuestOrder, error) {
+		var o GuestOrder
+		err := s.DB.Tenant(ctx, t.ID, func(tx pgx.Tx) error {
+			var err error
+			o, err = s.orderView(ctx, tx, t, id, p.UserID)
+			return err
+		})
+		return o, err
+	}
+	o, err := load()
+	if err == nil && o.Status == StPaymentPending {
+		s.CheckPendingPayments(ctx, t.ID, p.UserID)
+		return load()
+	}
 	return o, err
 }
 
@@ -346,7 +355,12 @@ func linkExternalMeter(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUI
 
 // GuestOrder returns an order to whoever holds its key.
 func (s *Service) GuestOrder(ctx context.Context, t Tenant, id uuid.UUID, key string) (GuestOrder, error) {
+	return s.guestOrder(ctx, t, id, key, true)
+}
+
+func (s *Service) guestOrder(ctx context.Context, t Tenant, id uuid.UUID, key string, check bool) (GuestOrder, error) {
 	var o GuestOrder
+	var guestUser uuid.UUID
 	err := s.DB.Tenant(ctx, t.ID, func(tx pgx.Tx) error {
 		var hash []byte
 		var userID uuid.UUID
@@ -356,8 +370,15 @@ func (s *Service) GuestOrder(ctx context.Context, t Tenant, id uuid.UUID, key st
 			return ErrNotFound
 		}
 		o, err = s.orderView(ctx, tx, t, id, userID)
+		if err == nil && o.Status == StPaymentPending {
+			guestUser = userID
+		}
 		return err
 	})
+	if check && err == nil && guestUser != uuid.Nil {
+		s.CheckPendingPayments(ctx, t.ID, guestUser)
+		return s.guestOrder(ctx, t, id, key, false)
+	}
 	return o, err
 }
 
