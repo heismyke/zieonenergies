@@ -64,6 +64,9 @@ func (s *Server) routes() {
 	s.handle("GET /v1/meters/{id}/consumption", s.consumption)
 	s.handle("GET /v1/meters/{id}/readings", s.readings)
 	s.handle("POST /v1/meters/{id}/transfer", s.requestTransfer)
+	s.handle("POST /v1/orders", s.createOrder)
+	s.handle("GET /v1/orders", s.listOrders)
+	s.handle("GET /v1/orders/{id}", s.getOrder)
 	s.handle("POST /v1/purchases", s.purchase)
 	s.handle("GET /v1/purchases", s.listPurchases)
 	s.handle("GET /v1/purchases/{id}", s.getPurchase)
@@ -576,6 +579,61 @@ func (s *Server) purchase(w http.ResponseWriter, r *http.Request) error {
 		p, err := s.svc.Purchase(r.Context(), c.P, c.Tenant, in)
 		return 201, p, err
 	})
+}
+
+// Orders: the buy page for signed-in customers (DisCo meters, card checkout).
+func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) error {
+	c, err := s.customer(r)
+	if err != nil {
+		return err
+	}
+	if !s.orderLimiter.Allow(c.P.UserID.String()) {
+		return tooMany()
+	}
+	body, err := readBody(r)
+	if err != nil {
+		return err
+	}
+	var in app.OrderInput
+	if err := decodeBytes(body, &in); err != nil {
+		return err
+	}
+	// Paystack returns the buyer to the site they started on, if it is approved.
+	if o := strings.TrimRight(r.Header.Get("Origin"), "/"); o != "" && s.originAllowed(r.Context(), o) {
+		in.ReturnURL = o
+	}
+	return s.idempotent(w, r, c, body, func() (int, any, error) {
+		o, err := s.svc.CreateOrder(r.Context(), c.P, c.Tenant, in)
+		return 201, o, err
+	})
+}
+
+func (s *Server) listOrders(w http.ResponseWriter, r *http.Request) error {
+	c, err := s.customer(r)
+	if err != nil {
+		return err
+	}
+	os, err := s.svc.Orders(r.Context(), c.P, c.Tenant, queryInt(r, "limit", 20, 100))
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, 200, map[string]any{"orders": os})
+}
+
+func (s *Server) getOrder(w http.ResponseWriter, r *http.Request) error {
+	c, err := s.customer(r)
+	if err != nil {
+		return err
+	}
+	id, err := pathUUID(r, "id")
+	if err != nil {
+		return err
+	}
+	o, err := s.svc.Order(r.Context(), c.P, c.Tenant, id)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, 200, o)
 }
 
 func (s *Server) listPurchases(w http.ResponseWriter, r *http.Request) error {

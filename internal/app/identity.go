@@ -87,9 +87,15 @@ func (s *Service) Register(ctx context.Context, t Tenant, in RegisterInput) (Ses
 	var u User
 	err = s.DB.Tenant(ctx, t.ID, func(tx pgx.Tx) error {
 		var err error
+		// A passwordless customer (left by a guest order) is claimed by signing up.
 		u, err = scanUser(tx.QueryRow(ctx, `INSERT INTO users (tenant_id, email, phone, name, password_hash, role)
-			VALUES ($1,$2,$3,$4,$5,'customer') RETURNING `+userCols, t.ID, in.Email, strings.TrimSpace(in.Phone), strings.TrimSpace(in.Name), hash))
-		if db.IsUniqueViolation(err) {
+			VALUES ($1,$2,$3,$4,$5,'customer')
+			ON CONFLICT (tenant_id, lower(email)) DO UPDATE SET password_hash=EXCLUDED.password_hash,
+				name=CASE WHEN EXCLUDED.name<>'' THEN EXCLUDED.name ELSE users.name END,
+				phone=CASE WHEN EXCLUDED.phone<>'' THEN EXCLUDED.phone ELSE users.phone END, updated_at=now()
+			WHERE users.password_hash IS NULL AND users.role='customer' AND users.status='active'
+			RETURNING `+userCols, t.ID, in.Email, strings.TrimSpace(in.Phone), strings.TrimSpace(in.Name), hash))
+		if db.IsUniqueViolation(err) || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, ErrNotFound) {
 			return errf(http.StatusConflict, "email_taken", "an account with this email already exists")
 		}
 		if err != nil {

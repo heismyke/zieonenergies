@@ -18,7 +18,7 @@ func TestGuestCheckout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(agg.handler))
 	defer srv.Close()
 	e.svc.Vending["vtpass"] = vending.NewVTpass(srv.URL+"/sandbox", "AK", "PK", "SK", "08011111111")
-	p := e.provision("zen", nil, nil)
+	p := e.provision("zen", map[string]bool{"guest_orders": true}, nil)
 	h := tenantHdr(p.Slug)
 
 	ds := e.must(e.do("GET", "/v1/public/discos", "", nil, h), 200).list("discos")
@@ -103,7 +103,7 @@ func TestGuestCheckoutRedirect(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(agg.handler))
 	defer srv.Close()
 	e.svc.Vending["vtpass"] = vending.NewVTpass(srv.URL+"/sandbox", "AK", "PK", "SK", "08011111111")
-	p := e.provision("zen", nil, nil)
+	p := e.provision("zen", map[string]bool{"guest_orders": true}, nil)
 	e.must(e.do("PATCH", "/v1/admin/settings", p.Admin, map[string]any{"allowed_origins": []string{"https://shop.zen.test"}}), 200)
 
 	o := e.must(e.do("POST", "/v1/public/orders", "", map[string]any{"provider_code": "IKEDC", "meter_number": "1111111111111",
@@ -123,4 +123,77 @@ func TestGuestCheckoutRedirect(t *testing.T) {
 	if g.str("status") != "vended" || len(g.str("token")) != 20 {
 		t.Fatalf("after payment the order shows the token: %s", g.Raw)
 	}
+}
+
+// The public buy page with an account: sign up, buy, see the order history.
+func TestAccountOrders(t *testing.T) {
+	e := newEnv(t, false)
+	agg := &fakeAggregator{settled: map[string]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(agg.handler))
+	defer srv.Close()
+	e.svc.Vending["vtpass"] = vending.NewVTpass(srv.URL+"/sandbox", "AK", "PK", "SK", "08011111111")
+	p := e.provision("zen", map[string]bool{"wallet": false}, nil) // buy-only, like production
+	h := tenantHdr(p.Slug)
+
+	// Buying without an account is off by default.
+	e.must(e.do("POST", "/v1/public/orders", "", map[string]any{"provider_code": "IKEDC", "meter_number": "1111111111111",
+		"amount_kobo": 200000, "email": "buyer@example.com", "phone": "08031234567"}, h, idem(uuid.NewString())), 403)
+
+	order := func(token, meter string, amount int64) resp {
+		return e.do("POST", "/v1/orders", token, map[string]any{"provider_code": "IKEDC", "meter_number": meter, "amount_kobo": amount},
+			idem(uuid.NewString()))
+	}
+	e.must(e.do("POST", "/v1/orders", "", map[string]any{"provider_code": "IKEDC", "meter_number": "1111111111111", "amount_kobo": 200000}, h, idem(uuid.NewString())), 401)
+
+	c := e.customer(p.Slug, "buyer@example.com")
+	e.must(order(c.Token, "1111111111111", 40000), 400) // below the DisCo minimum
+	e.must(order(c.Token, "9999999999", 200000), 404)   // unknown meter, nothing charged
+	o := e.must(order(c.Token, "1111111111111", 200000), 201)
+	if o.str("status") != "vended" || len(o.str("token")) != 20 || o.str("key") != "" || o.str("customer_name") != "TESTMETER1" {
+		t.Fatalf("account order: %s", o.Raw)
+	}
+	if got := e.must(e.do("GET", "/v1/orders/"+o.str("id"), c.Token, nil), 200); got.str("token") != o.str("token") {
+		t.Fatalf("get order: %s", got.Raw)
+	}
+	if ms := e.must(e.do("GET", "/v1/meters", c.Token, nil), 200).list("meters"); len(ms) != 1 {
+		t.Fatalf("the meter is saved to the account: %v", ms)
+	}
+	other := e.customer(p.Slug, "other@example.com")
+	e.must(e.do("GET", "/v1/orders/"+o.str("id"), other.Token, nil), 404)
+
+	// DisCo fails after payment: with wallets off the money goes back to the card.
+	f := e.must(order(c.Token, "3000000000000", 100000), 201)
+	if f.str("status") != "refunded" || f.get("token") != nil {
+		t.Fatalf("failed account order: %s", f.Raw)
+	}
+	var payStatus string
+	_ = e.svc.DB.Pool.QueryRow(context.Background(), `SELECT status FROM payments WHERE vend_transaction_id=$1`, f.str("id")).Scan(&payStatus)
+	if payStatus != "refund_pending" {
+		t.Fatalf("refund must go to the card: payment=%s", payStatus)
+	}
+	if os := e.must(e.do("GET", "/v1/orders", c.Token, nil), 200).list("orders"); len(os) != 2 || os[0].(map[string]any)["id"] != f.str("id") {
+		t.Fatalf("order history, newest first: %v", os)
+	}
+}
+
+// Signing up claims the passwordless record a guest order left behind, but
+// does not reveal those guest orders: nothing proved the email.
+func TestSignUpClaimsGuestRecord(t *testing.T) {
+	e := newEnv(t, false)
+	agg := &fakeAggregator{settled: map[string]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(agg.handler))
+	defer srv.Close()
+	e.svc.Vending["vtpass"] = vending.NewVTpass(srv.URL+"/sandbox", "AK", "PK", "SK", "08011111111")
+	p := e.provision("zen", map[string]bool{"guest_orders": true}, nil)
+	h := tenantHdr(p.Slug)
+	e.must(e.do("POST", "/v1/public/orders", "", map[string]any{"provider_code": "IKEDC", "meter_number": "1111111111111",
+		"amount_kobo": 200000, "email": "Guest@Example.com", "phone": "08031234567"}, h, idem(uuid.NewString())), 201)
+
+	c := e.customer(p.Slug, "guest@example.com")
+	if os := e.must(e.do("GET", "/v1/orders", c.Token, nil), 200).list("orders"); len(os) != 0 {
+		t.Fatalf("guest orders must not appear in a newly claimed account: %v", os)
+	}
+	e.login(p.Slug, "guest@example.com", "customer-pass-1")
+	// Once claimed, the email is taken.
+	e.must(e.do("POST", "/v1/auth/register", "", map[string]string{"email": "guest@example.com", "password": "another-pass-1"}, h), 409)
 }

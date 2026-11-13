@@ -620,9 +620,13 @@ func (s *Service) refund(ctx context.Context, tx pgx.Tx, v vendRow, from, reason
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM guest_orders WHERE vend_transaction_id=$1)`, v.id).Scan(&guest); err != nil {
 		return err
 	}
+	var walletOn bool
+	if err := tx.QueryRow(ctx, `SELECT coalesce((features->>'wallet')::boolean, true) FROM tenants WHERE id=$1`, v.tenant).Scan(&walletOn); err != nil {
+		return err
+	}
 	toWallet := v.wallet + v.external
-	if guest && v.external > 0 {
-		// Guests have no wallet to spend from: return card money to the card.
+	if (guest || !walletOn) && v.external > 0 {
+		// No wallet to spend from (guest, or the tenant has wallets off): return card money to the card.
 		toWallet -= v.external
 		if _, err := tx.Exec(ctx, `UPDATE payments SET status='refund_pending', updated_at=now()
 			WHERE vend_transaction_id=$1 AND status='succeeded'`, v.id); err != nil {
