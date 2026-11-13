@@ -82,6 +82,12 @@ func TestVTpassVendOutcomes(t *testing.T) {
 	if !v.Sandbox() {
 		t.Fatal("sandbox base URL must report Sandbox()")
 	}
+	// EEDC sends units as a JSON number, not a string.
+	numeric := `{"code":"000","content":{"transactions":{"status":"delivered","transactionId":"1742"}},"purchased_code":"Token : 1111 2222 3333 4444 5555","units":42.5}`
+	nv := fakeVTpass(t, func(map[string]any) string { return numeric }, nil)
+	if res, err := nv.Vend(ctx, req()); err != nil || res.Token != "11112222333344445555" || res.EnergyWh != 42500 {
+		t.Fatalf("numeric units: %+v %v", res, err)
+	}
 
 	cases := []struct {
 		name     string

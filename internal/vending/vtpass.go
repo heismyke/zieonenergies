@@ -72,12 +72,34 @@ type vtResponse struct {
 	Code                string          `json:"code"`
 	ResponseDescription string          `json:"response_description"`
 	Content             json.RawMessage `json:"content"`
-	PurchasedCode       string          `json:"purchased_code"`
-	Token               string          `json:"token"`
-	MainToken           string          `json:"mainToken"`
-	Units               string          `json:"units"`
-	Tariff              string          `json:"tariff"`
-	ExchangeReference   string          `json:"exchangeReference"`
+	PurchasedCode       flexString      `json:"purchased_code"`
+	Token               flexString      `json:"token"`
+	MainToken           flexString      `json:"mainToken"`
+	Units               flexString      `json:"units"`
+	Tariff              flexString      `json:"tariff"`
+	ExchangeReference   flexString      `json:"exchangeReference"`
+}
+
+// flexString accepts a JSON string, number or null. VTpass returns some
+// fields (units, for EEDC) as numbers on some DisCos and strings on others.
+type flexString string
+
+func (f *flexString) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*f = flexString(s)
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err == nil {
+		*f = flexString(n.String())
+		return nil
+	}
+	if string(b) == "null" {
+		*f = ""
+		return nil
+	}
+	return fmt.Errorf("vtpass: expected a string or number, got %s", b)
 }
 
 func (r vtResponse) txn() vtTxn {
@@ -121,11 +143,12 @@ func extractToken(fields ...string) string {
 var unitsRe = regexp.MustCompile(`([0-9]+(?:\.[0-9]+)?)\s*kwh`)
 
 func parseUnitsWh(s string) int64 {
-	m := unitsRe.FindStringSubmatch(strings.ToLower(s))
-	if m == nil {
-		return 0
+	num := strings.TrimSpace(s)
+	if m := unitsRe.FindStringSubmatch(strings.ToLower(s)); m != nil {
+		num = m[1]
 	}
-	f, err := strconv.ParseFloat(m[1], 64)
+	// A bare number (units sent as a JSON number) is kWh too.
+	f, err := strconv.ParseFloat(num, 64)
 	if err != nil {
 		return 0
 	}
@@ -139,8 +162,8 @@ func (v *VTpass) interpret(r vtResponse, req Request) (Result, error) {
 	status := strings.ToLower(t.Status)
 	switch {
 	case r.Code == "000" && status == "delivered":
-		res := Result{Token: extractToken(r.Token, r.PurchasedCode, r.MainToken), EnergyWh: parseUnitsWh(r.Units),
-			ProviderReference: "vtpass:" + t.TransactionID, Receipt: strings.TrimSpace(r.Tariff + " " + r.Units)}
+		res := Result{Token: extractToken(string(r.Token), string(r.PurchasedCode), string(r.MainToken)), EnergyWh: parseUnitsWh(string(r.Units)),
+			ProviderReference: "vtpass:" + t.TransactionID, Receipt: strings.TrimSpace(string(r.Tariff + " " + r.Units))}
 		if res.Token == "" && meterType(req.MeterType) == "prepaid" {
 			// Paid but no token returned: never refund automatically.
 			return Result{}, fmt.Errorf("vtpass delivered without a token (request %s)", RequestID(req.CreatedAt, req.Reference))
