@@ -143,3 +143,80 @@ func renderTokenEmail(e tokenEmail) string {
 	}
 	return b.String()
 }
+
+// resetEmail is the data for the password reset email.
+type resetEmail struct {
+	Brand, BrandName, Logo, Accent string
+	Hello, Email, Link             string
+	Support, SiteURL, SiteHost     string
+}
+
+var resetEmailTmpl = template.Must(template.New("reset").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><title>Reset your {{.BrandName}} password</title>
+<style>@media (max-width:480px){.pad{padding-left:20px!important;padding-right:20px!important}}</style></head>
+<body style="margin:0;padding:0;background:#050505;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#050505;">Set a new password for {{.Email}}. The link expires in 30 minutes.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#050505;">
+<tr><td align="center" style="padding:28px 10px 36px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:540px;font-family:Helvetica,Arial,sans-serif;color:#ffffff;">
+
+<tr><td class="pad" style="padding:0 24px 18px;">
+  {{if .Logo}}<img src="{{.Logo}}" width="30" height="30" alt="" style="display:inline-block;vertical-align:middle;border-radius:8px;border:0;">&nbsp;&nbsp;{{end}}<span style="vertical-align:middle;font-size:13px;font-weight:bold;letter-spacing:4px;color:#ffffff;">{{.Brand}}</span>
+</td></tr>
+
+<tr><td style="background:#111111;border:1px solid #2a2a2a;border-radius:20px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="pad" style="padding:30px 28px 8px;background:#17110a;background-image:linear-gradient(180deg,#1f160c 0%,#111111 100%);border-radius:20px 20px 0 0;">
+    <p style="margin:0;font-size:11px;font-weight:bold;letter-spacing:3px;color:{{.Accent}};">&#128274; PASSWORD RESET</p>
+    <h1 style="margin:14px 0 0;font-size:26px;line-height:1.25;font-weight:bold;color:#ffffff;">Set a new password</h1>
+  </td></tr>
+  <tr><td class="pad" style="padding:16px 28px 0;font-size:15px;line-height:1.6;color:#a8a8a8;">
+    <p style="margin:0 0 12px;">{{.Hello}}</p>
+    <p style="margin:0;">We got a request to reset the password for <span style="color:#ffffff;">{{.Email}}</span>. Tap the button to choose a new one.</p>
+  </td></tr>
+  <tr><td class="pad" style="padding:26px 28px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td align="center" style="background:{{.Accent}};border-radius:12px;"><a href="{{.Link}}" style="display:block;padding:15px 0;color:#050505;text-decoration:none;font-size:15px;font-weight:bold;">Reset password &rarr;</a></td>
+    </tr></table>
+    <p style="margin:12px 0 0;font-size:12px;color:#6c6c6c;" align="center">Works once &middot; expires in 30 minutes</p>
+  </td></tr>
+  <tr><td style="padding:22px 0 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td width="14" height="28" style="background:#050505;border-radius:0 14px 14px 0;font-size:0;">&nbsp;</td>
+      <td style="padding:0 10px;"><div style="border-top:2px dashed #2e2e2e;height:0;line-height:0;font-size:0;">&nbsp;</div></td>
+      <td width="14" height="28" style="background:#050505;border-radius:14px 0 0 14px;font-size:0;">&nbsp;</td>
+    </tr></table>
+  </td></tr>
+  <tr><td class="pad" style="padding:16px 28px 26px;font-size:12px;line-height:1.6;color:#6c6c6c;">
+    Didn't ask for this? Ignore this email and your password stays the same.{{if .Support}} If you're worried, email <a href="mailto:{{.Support}}" style="color:#a8a8a8;">{{.Support}}</a>.{{end}}
+    <p style="margin:12px 0 0;word-break:break-all;">Button not working? Paste this link into your browser:<br><a href="{{.Link}}" style="color:#8c8c8c;">{{.Link}}</a></p>
+  </td></tr>
+  </table>
+</td></tr>
+
+<tr><td style="padding:26px 24px 0;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+    <td height="1" style="background:#2a2a2a;background-image:linear-gradient(90deg,#050505 0%,{{.Accent}} 50%,#050505 100%);font-size:0;line-height:0;">&nbsp;</td>
+  </tr></table>
+</td></tr>
+<tr><td align="center" style="padding:16px 24px 0;font-size:11px;line-height:1.7;color:#5c5c5c;">
+  Sent because someone asked to reset a {{.BrandName}} password.<br>
+  {{if .SiteURL}}<a href="{{.SiteURL}}" style="color:#8c8c8c;text-decoration:none;">{{.SiteHost}}</a>{{end}}
+</td></tr>
+
+</table>
+</td></tr></table>
+</body></html>`))
+
+func renderResetEmail(e resetEmail) string {
+	if !hexColor.MatchString(e.Accent) {
+		e.Accent = "#C8823A"
+	}
+	e.SiteHost = strings.TrimPrefix(strings.TrimPrefix(e.SiteURL, "https://"), "http://")
+	var b bytes.Buffer
+	if err := resetEmailTmpl.Execute(&b, e); err != nil {
+		return ""
+	}
+	return b.String()
+}

@@ -199,12 +199,7 @@ func groupToken(t string) string {
 }
 
 // siteURL is the tenant's buy site, for links in messages.
-func (s *Service) siteURL(m tokenMessage) string {
-	if m.domain != "" {
-		return "https://" + m.domain
-	}
-	return s.Cfg.SiteURL
-}
+func (s *Service) siteURL(m tokenMessage) string { return s.siteFor(m.domain) }
 
 func renderTokenMessage(m tokenMessage, token, site string) messaging.Message {
 	brand := m.brand

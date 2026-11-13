@@ -46,6 +46,8 @@ func (s *Server) routes() {
 	s.handle("POST /v1/auth/login", s.login)
 	s.handle("POST /v1/auth/refresh", s.refresh)
 	s.handle("POST /v1/auth/logout", s.logout)
+	s.handle("POST /v1/auth/forgot-password", s.forgotPassword)
+	s.handle("POST /v1/auth/reset-password", s.resetPassword)
 	s.handle("POST /v1/embed/exchange", s.embedExchange)
 
 	// Signed-in user (any role).
@@ -298,6 +300,47 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return writeJSON(w, 200, sess)
+}
+
+func (s *Server) forgotPassword(w http.ResponseWriter, r *http.Request) error {
+	if !s.authLimiter.Allow("forgot:" + app.Meta(r.Context()).IP) {
+		return tooMany()
+	}
+	var in struct {
+		Email string `json:"email"`
+	}
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	t, err := s.publicTenant(r)
+	if err != nil {
+		return err
+	}
+	if err := s.svc.ForgotPassword(r.Context(), t, in.Email); err != nil {
+		return err
+	}
+	return writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) resetPassword(w http.ResponseWriter, r *http.Request) error {
+	if !s.authLimiter.Allow("reset:" + app.Meta(r.Context()).IP) {
+		return tooMany()
+	}
+	var in struct {
+		Code     string `json:"code"`
+		Password string `json:"password"`
+	}
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	t, err := s.publicTenant(r)
+	if err != nil {
+		return err
+	}
+	if err := s.svc.ResetPassword(r.Context(), t, in.Code, in.Password); err != nil {
+		return err
+	}
+	return writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 func (s *Server) refresh(w http.ResponseWriter, r *http.Request) error {

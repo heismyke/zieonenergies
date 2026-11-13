@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -491,4 +492,70 @@ func lagosTZ() *time.Location {
 		return time.FixedZone("WAT", 3600)
 	}
 	return l
+}
+
+// Forgot password emails a one-time link without saying whether the account
+// exists; the link sets a new password once and signs out every device.
+func TestForgotPassword(t *testing.T) {
+	e := newEnv(t, false)
+	mail := &fakeMessenger{}
+	e.svc.Messengers = map[string]messaging.Sender{messaging.Email: mail}
+	p := e.provision("zen", nil, nil)
+	reg := e.must(e.do("POST", "/v1/auth/register", "", map[string]string{"email": "Forget@Example.com", "password": "old-password-1", "name": "Ada Okafor"},
+		tenantHdr(p.Slug)), 201)
+	oldRefresh := reg.str("refresh_token")
+
+	sent := func(n int) []messaging.Message {
+		for i := 0; i < 200; i++ {
+			mail.mu.Lock()
+			got := append([]messaging.Message(nil), mail.sent...)
+			mail.mu.Unlock()
+			if len(got) >= n {
+				return got
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("expected %d reset emails, got %d", n, len(mail.sent))
+		return nil
+	}
+
+	// Unknown email: same answer, nothing sent.
+	e.must(e.do("POST", "/v1/auth/forgot-password", "", map[string]string{"email": "nobody@example.com"}, tenantHdr(p.Slug)), 200)
+	e.must(e.do("POST", "/v1/auth/forgot-password", "", map[string]string{"email": " forget@example.com "}, tenantHdr(p.Slug)), 200)
+	m := sent(1)[0]
+	if len(mail.sent) != 1 || m.To != "forget@example.com" || !strings.Contains(m.HTML, "Hi Ada,") {
+		t.Fatalf("reset email: %+v", mail.sent)
+	}
+	i := strings.Index(m.Text, "/reset-password?code=")
+	if i < 0 {
+		t.Fatalf("no link in: %s", m.Text)
+	}
+	code, _ := url.QueryUnescape(strings.Fields(m.Text[i+len("/reset-password?code="):])[0])
+
+	reset := func(code, pw string) resp {
+		return e.do("POST", "/v1/auth/reset-password", "", map[string]string{"code": code, "password": pw}, tenantHdr(p.Slug))
+	}
+	e.must(reset(code, "short"), 400)
+	e.must(reset("not-a-code", "new-password-1"), 400)
+	e.must(reset(code, "new-password-1"), 200)
+	e.must(reset(code, "new-password-2"), 400) // used up
+
+	login := func(pw string) resp {
+		return e.do("POST", "/v1/auth/login", "", map[string]string{"email": "forget@example.com", "password": pw}, tenantHdr(p.Slug))
+	}
+	e.must(login("old-password-1"), 401)
+	e.must(login("new-password-1"), 200)
+	e.must(e.do("POST", "/v1/auth/refresh", "", map[string]string{"refresh_token": oldRefresh}, tenantHdr(p.Slug)), 401)
+
+	// A newer link replaces an older one.
+	e.must(e.do("POST", "/v1/auth/forgot-password", "", map[string]string{"email": "forget@example.com"}, tenantHdr(p.Slug)), 200)
+	e.must(e.do("POST", "/v1/auth/forgot-password", "", map[string]string{"email": "forget@example.com"}, tenantHdr(p.Slug)), 200)
+	all := sent(3)
+	first := func(m messaging.Message) string {
+		i := strings.Index(m.Text, "/reset-password?code=")
+		c, _ := url.QueryUnescape(strings.Fields(m.Text[i+len("/reset-password?code="):])[0])
+		return c
+	}
+	e.must(reset(first(all[1]), "newer-password-1"), 400)
+	e.must(reset(first(all[2]), "newer-password-1"), 200)
 }
