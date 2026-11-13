@@ -42,6 +42,7 @@ type Config struct {
 	// Token receipts outside the app. Empty key = that channel is off.
 	ResendAPIKey   string
 	EmailFrom      string // e.g. "Zenerlink <receipts@zenerlink.com>"
+	SiteURL        string // buy site linked from emails, e.g. https://www.zenerlink.com
 	TermiiAPIKey   string
 	TermiiSenderID string
 	TermiiBaseURL  string
@@ -81,6 +82,7 @@ func Load() (Config, error) {
 		PaystackSecretKey:    os.Getenv("PAYSTACK_SECRET_KEY"),
 		ResendAPIKey:         os.Getenv("RESEND_API_KEY"),
 		EmailFrom:            get("EMAIL_FROM", "Zenerlink <receipts@zenerlink.com>"),
+		SiteURL:              strings.TrimRight(get("SITE_URL", "https://www.zenerlink.com"), "/"),
 		TermiiAPIKey:         os.Getenv("TERMII_API_KEY"),
 		TermiiSenderID:       get("TERMII_SENDER_ID", "Zenerlink"),
 		TermiiBaseURL:        get("TERMII_BASE_URL", "https://v3.api.termii.com"),

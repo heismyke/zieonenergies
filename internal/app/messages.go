@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html"
 	"net/http"
 	"strings"
 	"time"
@@ -84,6 +83,10 @@ type tokenMessage struct {
 	amount, fee, energyWh int64
 	meter, disco, brand   string
 	tokenEnc              []byte
+	customer, method      string
+	createdAt             time.Time
+	logo, accent, support string
+	domain                string
 }
 
 // DeliverTokenMessages sends queued token receipts whose order has finished.
@@ -93,7 +96,9 @@ func (s *Service) DeliverTokenMessages(ctx context.Context) error {
 	err := s.DB.System(ctx, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT o.id, o.tenant_id, o.vend_transaction_id, o.channel, o.destination, o.attempts,
 				v.status, v.amount_kobo, v.fee_kobo, v.energy_wh, m.meter_number,
-				coalesce(t.provider_name, m.provider_code), coalesce(b.display_name, ''), et.token_enc
+				coalesce(t.provider_name, m.provider_code), coalesce(b.display_name, ''), et.token_enc,
+				m.customer_name, v.payment_method, v.created_at, coalesce(b.logo_url, ''), coalesce(b.theme->>'primary', ''),
+				coalesce(b.support_email, ''), coalesce(b.custom_domain, '')
 			FROM outbound_messages o
 			JOIN vend_transactions v ON v.id = o.vend_transaction_id
 			JOIN meters m ON m.id = v.meter_id
@@ -109,7 +114,8 @@ func (s *Service) DeliverTokenMessages(ctx context.Context) error {
 		for rows.Next() {
 			var m tokenMessage
 			if err := rows.Scan(&m.id, &m.tenant, &m.vend, &m.channel, &m.to, &m.attempts, &m.status, &m.amount, &m.fee,
-				&m.energyWh, &m.meter, &m.disco, &m.brand, &m.tokenEnc); err != nil {
+				&m.energyWh, &m.meter, &m.disco, &m.brand, &m.tokenEnc,
+				&m.customer, &m.method, &m.createdAt, &m.logo, &m.accent, &m.support, &m.domain); err != nil {
 				rows.Close()
 				return err
 			}
@@ -167,7 +173,7 @@ func (s *Service) sendTokenMessage(ctx context.Context, m tokenMessage) {
 		}
 		token = string(plain)
 	}
-	ref, err := sender.Send(ctx, renderTokenMessage(m, token))
+	ref, err := sender.Send(ctx, renderTokenMessage(m, token, s.siteURL(m)))
 	switch {
 	case err == nil:
 		finish("sent", ref, "", 0)
@@ -192,7 +198,15 @@ func groupToken(t string) string {
 	return b.String()
 }
 
-func renderTokenMessage(m tokenMessage, token string) messaging.Message {
+// siteURL is the tenant's buy site, for links in messages.
+func (s *Service) siteURL(m tokenMessage) string {
+	if m.domain != "" {
+		return "https://" + m.domain
+	}
+	return s.Cfg.SiteURL
+}
+
+func renderTokenMessage(m tokenMessage, token, site string) messaging.Message {
 	brand := m.brand
 	if brand == "" {
 		brand = "Zenerlink"
@@ -200,31 +214,62 @@ func renderTokenMessage(m tokenMessage, token string) messaging.Message {
 	ref := strings.ToUpper(m.vend.String()[:8])
 	naira := "₦" + nairaStr(m.amount-m.fee)
 	kwh := fmt.Sprintf("%.1f kWh", WhToKwh(m.energyWh))
-	if token == "" {
-		// Postpaid: the bill is paid, there is no token.
-		text := fmt.Sprintf("%s: Your %s bill payment of N%s for meter %s was received. Ref %s", brand, m.disco, nairaStr(m.amount-m.fee), m.meter, ref)
-		return messaging.Message{To: m.to, Subject: fmt.Sprintf("%s bill paid: %s", m.disco, naira), Text: text}
-	}
 	tok := groupToken(token)
 	if m.channel != messaging.Email {
+		if token == "" {
+			return messaging.Message{To: m.to, Text: fmt.Sprintf("%s: Your %s bill payment of N%s for meter %s was received. Ref %s", brand, m.disco, nairaStr(m.amount-m.fee), m.meter, ref)}
+		}
 		// "N" not "₦": one non-GSM character makes an SMS cost twice as much.
 		return messaging.Message{To: m.to, Text: fmt.Sprintf("%s: Your %s token for meter %s is %s (%s, N%s). Ref %s",
 			brand, m.disco, m.meter, tok, kwh, nairaStr(m.amount-m.fee), ref)}
 	}
-	text := fmt.Sprintf("Your %s token\n\n%s\n\nMeter: %s\nUnits: %s\nAmount: %s\nReference: %s\n\nType the 20 digits on your meter keypad and press Enter.\n\n%s",
-		m.disco, tok, m.meter, kwh, naira, ref, brand)
-	e := html.EscapeString
-	body := fmt.Sprintf(`<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;color:#111">
-<p style="font-size:13px;letter-spacing:3px;font-weight:bold">%s</p>
-<p style="font-size:15px">Your %s token is ready.</p>
-<p style="font-family:monospace;font-size:24px;font-weight:bold;letter-spacing:1px;background:#f4f1ea;padding:16px;border-radius:8px;text-align:center">%s</p>
-<table style="font-size:14px;width:100%%;border-collapse:collapse">
-<tr><td style="color:#666;padding:4px 0">Meter</td><td style="text-align:right">%s</td></tr>
-<tr><td style="color:#666;padding:4px 0">Units</td><td style="text-align:right">%s</td></tr>
-<tr><td style="color:#666;padding:4px 0">Amount</td><td style="text-align:right">%s</td></tr>
-<tr><td style="color:#666;padding:4px 0">Reference</td><td style="text-align:right">%s</td></tr>
-</table>
-<p style="font-size:13px;color:#666">Type the 20 digits on your meter keypad and press Enter.</p>
-</div>`, e(strings.ToUpper(brand)), e(m.disco), e(tok), e(m.meter), e(kwh), e(naira), e(ref))
-	return messaging.Message{To: m.to, Subject: fmt.Sprintf("Your %s token: %s", m.disco, tok), Text: text, HTML: body}
+
+	e := tokenEmail{Brand: strings.ToUpper(brand), Logo: m.logo, Accent: m.accent, Support: m.support, SiteURL: site}
+	if e.Logo == "" && site != "" && brand == "Zenerlink" {
+		e.Logo = site + "/icon-192.png"
+	}
+	if site != "" {
+		e.ReceiptURL = site + "/order/" + m.vend.String()
+		e.TermsURL, e.PrivacyURL = site+"/terms", site+"/privacy"
+	}
+	paid := "Card"
+	if m.method == "wallet" {
+		paid = "Wallet"
+	}
+	e.Rows = [][2]string{{"Date", m.createdAt.In(lagos).Format("2 Jan 2006, 3:04 PM")}}
+	if m.customer != "" {
+		e.Rows = append(e.Rows, [2]string{"Name", m.customer})
+	}
+	e.Rows = append(e.Rows, [2]string{"Meter", m.meter}, [2]string{"DisCo", m.disco})
+	if token != "" {
+		e.Rows = append(e.Rows, [2]string{"Units", kwh})
+	}
+	e.Rows = append(e.Rows, [2]string{"Electricity", naira})
+	if m.fee > 0 {
+		e.Rows = append(e.Rows, [2]string{"Service fee", "₦" + nairaStr(m.fee)})
+	}
+	e.Rows = append(e.Rows, [2]string{"Paid with", paid}, [2]string{"Reference", ref})
+	e.Total = "₦" + nairaStr(m.amount)
+
+	var subject, text string
+	if token == "" {
+		// Postpaid: the bill is paid, there is no token.
+		e.Headline = fmt.Sprintf("%s bill paid", naira)
+		e.Sub = fmt.Sprintf("%s · meter %s", m.disco, m.meter)
+		e.Preheader = fmt.Sprintf("Your %s bill payment for meter %s was received.", m.disco, m.meter)
+		subject = fmt.Sprintf("%s bill paid: %s", m.disco, naira)
+		text = fmt.Sprintf("Your %s bill payment of %s for meter %s was received.\n\nReference: %s\n\n%s", m.disco, naira, m.meter, ref, brand)
+	} else {
+		e.Token = tok
+		e.Headline = fmt.Sprintf("%s of %s", naira, m.disco)
+		e.Sub = fmt.Sprintf("%s for meter %s", kwh, m.meter)
+		e.Preheader = fmt.Sprintf("Token %s · %s for meter %s", tok, kwh, m.meter)
+		subject = fmt.Sprintf("Your %s token: %s", m.disco, tok)
+		text = fmt.Sprintf("Your %s token\n\n%s\n\nMeter: %s\nUnits: %s\nAmount: %s\nTotal paid: %s\nReference: %s\n\nType the 20 digits on your meter keypad and press Enter.\n\n%s",
+			m.disco, tok, m.meter, kwh, naira, e.Total, ref, brand)
+	}
+	if e.ReceiptURL != "" {
+		text += "\nReceipt: " + e.ReceiptURL
+	}
+	return messaging.Message{To: m.to, Subject: subject, Text: text, HTML: renderTokenEmail(e)}
 }
