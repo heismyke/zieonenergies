@@ -87,6 +87,7 @@ type tokenMessage struct {
 	createdAt             time.Time
 	logo, accent, support string
 	domain                string
+	sandbox               bool
 }
 
 // DeliverTokenMessages sends queued token receipts whose order has finished.
@@ -98,7 +99,7 @@ func (s *Service) DeliverTokenMessages(ctx context.Context) error {
 				v.status, v.amount_kobo, v.fee_kobo, v.energy_wh, m.meter_number,
 				coalesce(t.provider_name, m.provider_code), coalesce(b.display_name, ''), et.token_enc,
 				m.customer_name, v.payment_method, v.created_at, coalesce(b.logo_url, ''), coalesce(b.theme->>'primary', ''),
-				coalesce(b.support_email, ''), coalesce(b.custom_domain, '')
+				coalesce(b.support_email, ''), coalesce(b.custom_domain, ''), v.sandbox
 			FROM outbound_messages o
 			JOIN vend_transactions v ON v.id = o.vend_transaction_id
 			JOIN meters m ON m.id = v.meter_id
@@ -115,7 +116,7 @@ func (s *Service) DeliverTokenMessages(ctx context.Context) error {
 			var m tokenMessage
 			if err := rows.Scan(&m.id, &m.tenant, &m.vend, &m.channel, &m.to, &m.attempts, &m.status, &m.amount, &m.fee,
 				&m.energyWh, &m.meter, &m.disco, &m.brand, &m.tokenEnc,
-				&m.customer, &m.method, &m.createdAt, &m.logo, &m.accent, &m.support, &m.domain); err != nil {
+				&m.customer, &m.method, &m.createdAt, &m.logo, &m.accent, &m.support, &m.domain, &m.sandbox); err != nil {
 				rows.Close()
 				return err
 			}
@@ -219,7 +220,7 @@ func renderTokenMessage(m tokenMessage, token, site string) messaging.Message {
 			brand, m.disco, m.meter, tok, kwh, nairaStr(m.amount-m.fee), ref)}
 	}
 
-	e := tokenEmail{Brand: strings.ToUpper(brand), BrandName: brand, Logo: m.logo, Accent: m.accent, Support: m.support, SiteURL: site}
+	e := tokenEmail{Brand: strings.ToUpper(brand), BrandName: brand, Sandbox: m.sandbox, Logo: m.logo, Accent: m.accent, Support: m.support, SiteURL: site}
 	if e.Logo == "" && site != "" && brand == "Zenerlink" {
 		e.Logo = site + "/icon-192.png"
 	}

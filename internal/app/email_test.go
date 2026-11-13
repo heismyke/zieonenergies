@@ -24,3 +24,17 @@ func TestTokenEmailRenders(t *testing.T) {
 		os.WriteFile(p, []byte(msg.HTML), 0o644)
 	}
 }
+
+// Set RESET_PREVIEW=/path/file.html to write the email out and look at it.
+func TestResetEmailRenders(t *testing.T) {
+	msg := renderResetMessage(brandInfo{name: "Zenerlink", accent: "#C8823A", support: "support@zieonenergies.com"},
+		"https://www.zenerlink.com", "ada@example.com", "Ada Okafor", "abc123")
+	for _, want := range []string{"Hi Ada,", "https://www.zenerlink.com/reset-password?code=abc123", "ada@example.com", "icon-192.png"} {
+		if !strings.Contains(msg.HTML, want) {
+			t.Fatalf("reset html missing %q", want)
+		}
+	}
+	if p := os.Getenv("RESET_PREVIEW"); p != "" {
+		os.WriteFile(p, []byte(msg.HTML), 0o644)
+	}
+}
