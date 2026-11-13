@@ -33,7 +33,8 @@ func TestGuestCheckout(t *testing.T) {
 	for _, d := range ds {
 		if m := d.(map[string]any); m["provider_code"] == "IKEDC" {
 			// The DisCo's own minimum (₦500) and logo come from the aggregator catalogue.
-			if m["min_purchase_kobo"] != 50000.0 || m["max_purchase_kobo"] != 40000000.0 || m["logo_url"] != "https://img/ikedc.jpg" {
+			if m["min_purchase_kobo"] != 50000.0 || m["max_purchase_kobo"] != 40000000.0 || m["logo_url"] != "https://img/ikedc.jpg" ||
+				m["rate_kobo_per_kwh"].(float64) <= 0 {
 				t.Fatalf("IKEDC catalogue not applied: %v", m)
 			}
 		}

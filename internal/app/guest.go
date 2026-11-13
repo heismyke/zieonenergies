@@ -30,6 +30,9 @@ type Disco struct {
 	MinPurchaseKobo int64  `json:"min_purchase_kobo"`
 	MaxPurchaseKobo int64  `json:"max_purchase_kobo"`
 	ServiceFeeKobo  int64  `json:"service_fee_kobo"`
+	// For the "≈ kWh" estimate shown while typing; the DisCo's units are final.
+	RateKoboPerKwh int64 `json:"rate_kobo_per_kwh"`
+	VatBps         int   `json:"vat_bps"`
 }
 
 func (s *Service) PublicDiscos(ctx context.Context, t Tenant) ([]Disco, error) {
@@ -47,7 +50,8 @@ func (s *Service) PublicDiscos(ctx context.Context, t Tenant) ([]Disco, error) {
 		}
 		logo := s.withDiscoLimits(ctx, &tr)
 		out = append(out, Disco{ProviderCode: tr.ProviderCode, ProviderName: tr.ProviderName, LogoURL: logo,
-			MinPurchaseKobo: tr.MinPurchaseKobo, MaxPurchaseKobo: tr.MaxPurchaseKobo, ServiceFeeKobo: tr.ServiceFeeKobo})
+			MinPurchaseKobo: tr.MinPurchaseKobo, MaxPurchaseKobo: tr.MaxPurchaseKobo, ServiceFeeKobo: tr.ServiceFeeKobo,
+			RateKoboPerKwh: tr.RateKoboPerKwh, VatBps: tr.VatBps})
 	}
 	return out, nil
 }
