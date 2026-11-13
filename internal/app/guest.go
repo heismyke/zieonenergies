@@ -227,7 +227,9 @@ type OrderInput struct {
 	AmountKobo   int64  `json:"amount_kobo"`
 	// "checkout" (card, transfer or USSD; the default) or "wallet".
 	PaymentMethod string `json:"payment_method"`
-	ReturnURL     string `json:"-"`
+	// Also send the token by email, SMS or WhatsApp once it is issued.
+	DeliverTo DeliverTo `json:"deliver_to"`
+	ReturnURL string    `json:"-"`
 }
 
 // CreateOrder is the account version of the guest order: same checks, the
@@ -260,6 +262,9 @@ func (s *Service) CreateOrder(ctx context.Context, p auth.Principal, t Tenant, i
 	ret := in.ReturnURL
 	pu, err := s.purchaseWithHook(ctx, p, t, PurchaseInput{MeterID: meterID, AmountKobo: in.AmountKobo, PaymentMethod: in.PaymentMethod},
 		func(ctx context.Context, tx pgx.Tx, vendID uuid.UUID) (string, error) {
+			if err := queueTokenMessages(ctx, tx, t.ID, p.UserID, vendID, in.DeliverTo); err != nil {
+				return "", err
+			}
 			if ret == "" {
 				return "", nil
 			}

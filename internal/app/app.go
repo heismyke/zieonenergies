@@ -20,6 +20,7 @@ import (
 	"github.com/heismyke/zieonenergies/internal/auth"
 	"github.com/heismyke/zieonenergies/internal/config"
 	"github.com/heismyke/zieonenergies/internal/db"
+	"github.com/heismyke/zieonenergies/internal/messaging"
 	"github.com/heismyke/zieonenergies/internal/payments"
 	"github.com/heismyke/zieonenergies/internal/secure"
 	"github.com/heismyke/zieonenergies/internal/vending"
@@ -39,6 +40,8 @@ type Service struct {
 	Vending map[string]vending.Provider
 	// Payment providers by name: "sandbox" (non-production), "paystack".
 	Payments map[string]payments.Provider
+	// Message senders by channel (email, sms, whatsapp); a missing channel is off.
+	Messengers map[string]messaging.Sender
 }
 
 // Error is a business error safe to show to API clients.

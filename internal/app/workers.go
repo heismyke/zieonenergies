@@ -27,6 +27,7 @@ func (s *Service) RunWorkers(ctx context.Context) {
 		fn    func(context.Context) error
 	}{
 		{"webhooks", 5 * time.Second, s.DeliverWebhooks},
+		{"token_messages", 5 * time.Second, s.DeliverTokenMessages},
 		{"reconcile_vends", 30 * time.Second, s.ReconcileVends},
 		{"reconcile_payments", time.Minute, s.ReconcilePayments},
 		{"auto_topup", 30 * time.Second, s.RunAutoTopups},

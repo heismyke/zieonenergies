@@ -2,14 +2,17 @@ package httpapi_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/heismyke/zieonenergies/internal/messaging"
 	"github.com/heismyke/zieonenergies/internal/payments"
 	"github.com/heismyke/zieonenergies/internal/vending"
 )
@@ -338,5 +341,86 @@ func TestSubscribe(t *testing.T) {
 		return tx.QueryRow(context.Background(), `SELECT count(*) FROM subscribers WHERE email='reader@example.com'`).Scan(&n)
 	}); err != nil || n != 1 {
 		t.Fatalf("one subscriber row: %d %v", n, err)
+	}
+}
+
+type fakeMessenger struct {
+	mu   sync.Mutex
+	sent []messaging.Message
+	fail error
+}
+
+func (f *fakeMessenger) Send(_ context.Context, m messaging.Message) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return "", f.fail
+	}
+	f.sent = append(f.sent, m)
+	return fmt.Sprintf("msg-%d", len(f.sent)), nil
+}
+
+// Tokens go out by email and SMS once issued, never before, and only on the
+// channels that are configured.
+func TestTokenByEmailAndSMS(t *testing.T) {
+	e := newEnv(t, false)
+	agg := &fakeAggregator{settled: map[string]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(agg.handler))
+	defer srv.Close()
+	e.svc.Vending["vtpass"] = vending.NewVTpass(srv.URL+"/sandbox", "AK", "PK", "SK", "08011111111")
+	mail, sms := &fakeMessenger{}, &fakeMessenger{}
+	e.svc.Messengers = map[string]messaging.Sender{messaging.Email: mail, messaging.SMS: sms}
+	p := e.provision("zen", nil, nil)
+
+	ch := e.must(e.do("GET", "/v1/public/discos", "", nil, tenantHdr("zen")), 200).list("delivery_channels")
+	if len(ch) != 2 || ch[0] != "email" || ch[1] != "sms" {
+		t.Fatalf("delivery channels: %v", ch)
+	}
+
+	c := e.customer(p.Slug, "receipts@example.com")
+	e.fund(c, 1000000)
+	order := func(deliver map[string]any) resp {
+		return e.do("POST", "/v1/orders", c.Token, map[string]any{"provider_code": "IKEDC", "meter_number": "1111111111111",
+			"amount_kobo": 500000, "payment_method": "wallet", "deliver_to": deliver}, idem(uuid.NewString()))
+	}
+	e.must(order(map[string]any{"sms": true, "phone": "12345"}), 400)
+
+	o := e.must(order(map[string]any{"email": true, "sms": true, "whatsapp": true, "phone": "0803 123 4567"}), 201)
+	if err := e.svc.DeliverTokenMessages(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	tok := strings.ReplaceAll(o.str("token"), " ", "")
+	if len(mail.sent) != 1 || mail.sent[0].To != "receipts@example.com" || !strings.Contains(strings.ReplaceAll(mail.sent[0].Text, "-", ""), tok) {
+		t.Fatalf("email receipt: %+v (token %s)", mail.sent, tok)
+	}
+	if len(sms.sent) != 1 || sms.sent[0].To != "2348031234567" || !strings.Contains(strings.ReplaceAll(sms.sent[0].Text, "-", ""), tok) {
+		t.Fatalf("sms receipt: %+v", sms.sent)
+	}
+	// One SMS segment: plain GSM characters (no ₦) and at most 160 of them.
+	if txt := sms.sent[0].Text; len(txt) > 160 || strings.ContainsRune(txt, '₦') {
+		t.Fatalf("sms must fit one segment: %d chars: %s", len(txt), txt)
+	}
+	// Sent once only; WhatsApp is not configured, so it is skipped.
+	if err := e.svc.DeliverTokenMessages(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(mail.sent) != 1 || len(sms.sent) != 1 {
+		t.Fatalf("sent twice: %d %d", len(mail.sent), len(sms.sent))
+	}
+	var statuses []string
+	_ = e.svc.DB.System(context.Background(), func(tx pgx.Tx) error {
+		rows, err := tx.Query(context.Background(), `SELECT channel||':'||status FROM outbound_messages ORDER BY channel`)
+		if err != nil {
+			return err
+		}
+		statuses, err = pgx.CollectRows(rows, pgx.RowTo[string])
+		return err
+	})
+	if strings.Join(statuses, ",") != "email:sent,sms:sent,whatsapp:skipped" {
+		t.Fatalf("message statuses: %v", statuses)
+	}
+	// The number given is saved to the profile for next time.
+	if me := e.must(e.do("GET", "/v1/me", c.Token, nil), 200); me.str("user", "phone") == "" {
+		t.Fatalf("phone not saved: %s", me.Raw)
 	}
 }

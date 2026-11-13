@@ -26,6 +26,7 @@ import (
 	"github.com/heismyke/zieonenergies/internal/config"
 	"github.com/heismyke/zieonenergies/internal/db"
 	"github.com/heismyke/zieonenergies/internal/httpapi"
+	"github.com/heismyke/zieonenergies/internal/messaging"
 	"github.com/heismyke/zieonenergies/internal/mqttgw"
 	"github.com/heismyke/zieonenergies/internal/payments"
 	"github.com/heismyke/zieonenergies/internal/secure"
@@ -162,9 +163,10 @@ func newService(cfg config.Config, store *db.Store, log *slog.Logger) (*app.Serv
 	}
 	svc := &app.Service{
 		DB: store, Keys: keys, Cfg: cfg, Log: log, Now: time.Now,
-		Signer:   auth.NewSigner(cfg.JWTSigningKey, cfg.JWTKeyID, cfg.AccessTTL),
-		Vending:  map[string]vending.Provider{},
-		Payments: map[string]payments.Provider{},
+		Signer:     auth.NewSigner(cfg.JWTSigningKey, cfg.JWTKeyID, cfg.AccessTTL),
+		Vending:    map[string]vending.Provider{},
+		Payments:   map[string]payments.Provider{},
+		Messengers: map[string]messaging.Sender{},
 	}
 	if cfg.SandboxAllowed() {
 		svc.Vending["sandbox"] = vending.NewSandbox()
@@ -175,6 +177,15 @@ func newService(cfg config.Config, store *db.Store, log *slog.Logger) (*app.Serv
 	}
 	if cfg.PaystackSecretKey != "" {
 		svc.Payments["paystack"] = payments.NewPaystack(cfg.PaystackSecretKey)
+	}
+	if cfg.ResendAPIKey != "" {
+		svc.Messengers[messaging.Email] = messaging.Resend{APIKey: cfg.ResendAPIKey, From: cfg.EmailFrom}
+	}
+	if cfg.TermiiAPIKey != "" {
+		svc.Messengers[messaging.SMS] = messaging.Termii{APIKey: cfg.TermiiAPIKey, SenderID: cfg.TermiiSenderID, BaseURL: cfg.TermiiBaseURL, Channel: "dnd"}
+		if cfg.TermiiWhatsApp {
+			svc.Messengers[messaging.WhatsApp] = messaging.Termii{APIKey: cfg.TermiiAPIKey, SenderID: cfg.TermiiSenderID, BaseURL: cfg.TermiiBaseURL, Channel: "whatsapp"}
+		}
 	}
 	// svc.Vending["live"] is intentionally unset: it requires an authorised
 	// STS / DisCo vending partner integration (see docs/METER_VENDING_FLOW.md).

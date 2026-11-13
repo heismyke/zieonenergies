@@ -39,6 +39,14 @@ type Config struct {
 	VTpassSecretKey     string
 	VTpassFallbackPhone string
 
+	// Token receipts outside the app. Empty key = that channel is off.
+	ResendAPIKey   string
+	EmailFrom      string // e.g. "Zenerlink <receipts@zenerlink.com>"
+	TermiiAPIKey   string
+	TermiiSenderID string
+	TermiiBaseURL  string
+	TermiiWhatsApp bool // the Termii account has a WhatsApp sender set up
+
 	TrustProxyHeaders bool
 	WorkersEnabled    bool
 
@@ -71,6 +79,12 @@ func Load() (Config, error) {
 		RefreshTTL:           dur("REFRESH_TOKEN_TTL", 30*24*time.Hour),
 		EmbedTTL:             dur("EMBED_CODE_TTL", 2*time.Minute),
 		PaystackSecretKey:    os.Getenv("PAYSTACK_SECRET_KEY"),
+		ResendAPIKey:         os.Getenv("RESEND_API_KEY"),
+		EmailFrom:            get("EMAIL_FROM", "Zenerlink <receipts@zenerlink.com>"),
+		TermiiAPIKey:         os.Getenv("TERMII_API_KEY"),
+		TermiiSenderID:       get("TERMII_SENDER_ID", "Zenerlink"),
+		TermiiBaseURL:        get("TERMII_BASE_URL", "https://v3.api.termii.com"),
+		TermiiWhatsApp:       os.Getenv("TERMII_WHATSAPP") == "true",
 		SandboxWebhookSecret: os.Getenv("SANDBOX_WEBHOOK_SECRET"),
 		TrustProxyHeaders:    get("TRUST_PROXY_HEADERS", "false") == "true",
 		WorkersEnabled:       get("WORKERS_ENABLED", "true") == "true",

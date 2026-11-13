@@ -1207,7 +1207,7 @@ func (s *Server) publicDiscos(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	w.Header().Set("Cache-Control", "public, max-age=300")
-	return writeJSON(w, 200, map[string]any{"discos": ds})
+	return writeJSON(w, 200, map[string]any{"discos": ds, "delivery_channels": s.svc.DeliveryChannels()})
 }
 
 func (s *Server) publicVerifyMeter(w http.ResponseWriter, r *http.Request) error {
