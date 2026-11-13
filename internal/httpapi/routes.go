@@ -35,6 +35,8 @@ func (s *Server) routes() {
 	// Public guest checkout ("buy electricity" without an account).
 	s.handle("GET /v1/public/discos", s.publicDiscos)
 	s.handle("POST /v1/public/subscribe", s.publicSubscribe)
+	s.handle("GET /v1/public/token-shares/{code}", s.publicTokenShare)
+	s.handle("POST /v1/public/token-shares/{code}/reveal", s.publicRevealTokenShare)
 	s.handle("POST /v1/public/meters/verify", s.publicVerifyMeter)
 	s.handle("POST /v1/public/orders", s.publicCreateOrder)
 	s.handle("GET /v1/public/orders/{id}", s.publicGetOrder)
@@ -70,6 +72,8 @@ func (s *Server) routes() {
 	s.handle("POST /v1/orders", s.createOrder)
 	s.handle("GET /v1/orders", s.listOrders)
 	s.handle("GET /v1/orders/{id}", s.getOrder)
+	s.handle("POST /v1/orders/{id}/share", s.shareOrderToken)
+	s.handle("GET /v1/statement", s.statement)
 	s.handle("POST /v1/purchases", s.purchase)
 	s.handle("GET /v1/purchases", s.listPurchases)
 	s.handle("GET /v1/purchases/{id}", s.getPurchase)
@@ -172,6 +176,66 @@ func (s *Server) getBranding(w http.ResponseWriter, r *http.Request) error {
 	}
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	return writeJSON(w, 200, b)
+}
+
+func (s *Server) shareOrderToken(w http.ResponseWriter, r *http.Request) error {
+	c, err := s.customer(r)
+	if err != nil {
+		return err
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		return app.ErrNotFound
+	}
+	sh, err := s.svc.ShareToken(r.Context(), c.P, c.Tenant, id)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, 201, sh)
+}
+
+func (s *Server) statement(w http.ResponseWriter, r *http.Request) error {
+	c, err := s.customer(r)
+	if err != nil {
+		return err
+	}
+	st, err := s.svc.AccountStatement(r.Context(), c.P, c.Tenant, r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, 200, st)
+}
+
+func (s *Server) publicTokenShare(w http.ResponseWriter, r *http.Request) error {
+	if !s.publicLimiter.Allow(app.Meta(r.Context()).IP) {
+		return tooMany()
+	}
+	t, err := s.publicTenant(r)
+	if err != nil {
+		return err
+	}
+	sh, err := s.svc.SharedTokenInfo(r.Context(), t, r.PathValue("code"))
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	return writeJSON(w, 200, sh)
+}
+
+func (s *Server) publicRevealTokenShare(w http.ResponseWriter, r *http.Request) error {
+	if !s.authLimiter.Allow("reveal:" + app.Meta(r.Context()).IP) {
+		return tooMany()
+	}
+	t, err := s.publicTenant(r)
+	if err != nil {
+		return err
+	}
+	sh, err := s.svc.RevealSharedToken(r.Context(), t, r.PathValue("code"))
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	return writeJSON(w, 200, sh)
 }
 
 func (s *Server) publicSubscribe(w http.ResponseWriter, r *http.Request) error {

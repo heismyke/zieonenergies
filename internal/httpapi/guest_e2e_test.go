@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -423,4 +424,63 @@ func TestTokenByEmailAndSMS(t *testing.T) {
 	if me := e.must(e.do("GET", "/v1/me", c.Token, nil), 200); me.str("user", "phone") == "" {
 		t.Fatalf("phone not saved: %s", me.Raw)
 	}
+}
+
+// A shared token link shows the order without using it up; the first reveal
+// returns the token and every later one sees "used". A new link replaces the
+// old one. The statement covers purchases and wallet movements in a range.
+func TestTokenShareAndStatement(t *testing.T) {
+	e := newEnv(t, false)
+	agg := &fakeAggregator{settled: map[string]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(agg.handler))
+	defer srv.Close()
+	e.svc.Vending["vtpass"] = vending.NewVTpass(srv.URL+"/sandbox", "AK", "PK", "SK", "08011111111")
+	p := e.provision("zen", nil, nil)
+	c := e.customer(p.Slug, "share@example.com")
+	e.fund(c, 1000000)
+	o := e.must(e.do("POST", "/v1/orders", c.Token, map[string]any{"provider_code": "IKEDC", "meter_number": "1111111111111",
+		"amount_kobo": 500000, "payment_method": "wallet"}, idem(uuid.NewString())), 201)
+	id := o.str("id")
+
+	old := e.must(e.do("POST", "/v1/orders/"+id+"/share", c.Token, nil), 201).str("code")
+	code := e.must(e.do("POST", "/v1/orders/"+id+"/share", c.Token, nil), 201).str("code")
+	other := e.customer(p.Slug, "other@example.com")
+	e.must(e.do("POST", "/v1/orders/"+id+"/share", other.Token, nil), 404)
+
+	share := func(c, suffix, method string) resp {
+		return e.do(method, "/v1/public/token-shares/"+c+suffix, "", nil, tenantHdr("zen"))
+	}
+	if s := e.must(share(old, "", "GET"), 200); s.str("status") != "expired" {
+		t.Fatalf("replaced link must be expired: %s", s.Raw)
+	}
+	// Looking (as a link preview does) never uses it up.
+	for range 2 {
+		if s := e.must(share(code, "", "GET"), 200); s.str("status") != "ready" || s.get("token") != nil || s.str("meter_number") != "1111111111111" {
+			t.Fatalf("info: %s", s.Raw)
+		}
+	}
+	first := e.must(share(code, "/reveal", "POST"), 200)
+	if first.str("status") != "revealed" || first.str("token") != o.str("token") {
+		t.Fatalf("first reveal: %s (order token %s)", first.Raw, o.str("token"))
+	}
+	if again := e.must(share(code, "/reveal", "POST"), 200); again.str("status") != "used" || again.get("token") != nil {
+		t.Fatalf("second reveal must not show the token: %s", again.Raw)
+	}
+	e.must(share("not-a-code", "", "GET"), 404)
+
+	today := time.Now().In(lagosTZ()).Format("2006-01-02")
+	st := e.must(e.do("GET", "/v1/statement?from="+today+"&to="+today, c.Token, nil), 200)
+	if len(st.list("purchases")) != 1 || st.num("spent_kobo") != 500000 || st.num("wallet_opening_kobo") != 0 ||
+		st.num("wallet_closing_kobo") != 500000 || len(st.list("wallet")) != 2 || st.str("email") != "share@example.com" {
+		t.Fatalf("statement: %s", st.Raw)
+	}
+	e.must(e.do("GET", "/v1/statement?from=2026-01-01&to=2020-01-01", c.Token, nil), 400)
+}
+
+func lagosTZ() *time.Location {
+	l, err := time.LoadLocation("Africa/Lagos")
+	if err != nil {
+		return time.FixedZone("WAT", 3600)
+	}
+	return l
 }
