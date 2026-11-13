@@ -42,10 +42,29 @@ type Tenant struct {
 	Features       map[string]bool `json:"features"`
 	AllowedOrigins []string        `json:"allowed_origins"`
 	VendingMode    string          `json:"vending_mode"`
+	Fees           PaymentFees     `json:"fees"`
 	CreatedAt      time.Time       `json:"created_at"`
 }
 
 func (t Tenant) Enabled(feature string) bool { return t.Features[feature] }
+
+// PaymentFees is the convenience fee added on top of each purchase, by how the
+// customer pays. The DisCo always receives the full amount the customer chose.
+type PaymentFees struct {
+	CheckoutKobo int64 `json:"checkout_kobo"` // card, transfer or USSD through the payment provider
+	WalletKobo   int64 `json:"wallet_kobo"`   // paid from the customer's wallet
+}
+
+// MaxFeeKobo caps a convenience fee at ₦1,000.
+const MaxFeeKobo = 100000
+
+// MethodFee is the fee for a purchase paid with method.
+func (t Tenant) MethodFee(method string) int64 {
+	if method == "wallet" {
+		return t.Fees.WalletKobo
+	}
+	return t.Fees.CheckoutKobo
+}
 
 // Theme tokens mirror the frontends' design tokens (zener.gold, surface, ...),
 // so a tenant re-skins the apps without code changes.
@@ -83,8 +102,8 @@ type Branding struct {
 
 func scanTenant(row pgx.Row) (Tenant, error) {
 	var t Tenant
-	var feats []byte
-	err := row.Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.IsPlatform, &feats, &t.AllowedOrigins, &t.VendingMode, &t.CreatedAt)
+	var feats, fees []byte
+	err := row.Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.IsPlatform, &feats, &fees, &t.AllowedOrigins, &t.VendingMode, &t.CreatedAt)
 	if err != nil {
 		return t, notFoundIfNoRows(err)
 	}
@@ -94,10 +113,11 @@ func scanTenant(row pgx.Row) (Tenant, error) {
 	for k, v := range stored {
 		t.Features[k] = v
 	}
+	_ = json.Unmarshal(fees, &t.Fees)
 	return t, nil
 }
 
-const tenantCols = `id, slug, name, status, is_platform, features, allowed_origins, vending_mode, created_at`
+const tenantCols = `id, slug, name, status, is_platform, features, coalesce(settings->'fees', '{}'::jsonb), allowed_origins, vending_mode, created_at`
 
 // TenantBySlug is a public lookup (tenants carry no secrets).
 func (s *Service) TenantBySlug(ctx context.Context, slug string) (Tenant, error) {
@@ -123,7 +143,7 @@ func (s *Service) TenantByHost(ctx context.Context, host string) (Tenant, error)
 	return t, err
 }
 
-const tenantColsT = `t.id, t.slug, t.name, t.status, t.is_platform, t.features, t.allowed_origins, t.vending_mode, t.created_at`
+const tenantColsT = `t.id, t.slug, t.name, t.status, t.is_platform, t.features, coalesce(t.settings->'fees', '{}'::jsonb), t.allowed_origins, t.vending_mode, t.created_at`
 
 func (s *Service) TenantByID(ctx context.Context, id uuid.UUID) (Tenant, error) {
 	var t Tenant
@@ -268,6 +288,7 @@ func (s *Service) UpdateBranding(ctx context.Context, t Tenant, in BrandingInput
 type TenantSettingsInput struct {
 	Features       map[string]bool `json:"features"`
 	AllowedOrigins *[]string       `json:"allowed_origins"`
+	Fees           *PaymentFees    `json:"fees"`
 }
 
 func (s *Service) UpdateTenantSettings(ctx context.Context, t Tenant, in TenantSettingsInput) (Tenant, error) {
@@ -286,7 +307,16 @@ func (s *Service) UpdateTenantSettings(ctx context.Context, t Tenant, in TenantS
 			}
 		}
 	}
+	if f := in.Fees; f != nil && (f.CheckoutKobo < 0 || f.WalletKobo < 0 || f.CheckoutKobo > MaxFeeKobo || f.WalletKobo > MaxFeeKobo) {
+		return t, errf(http.StatusBadRequest, "invalid_fee", "fees must be between ₦0 and ₦%d", MaxFeeKobo/100)
+	}
 	err := s.DB.Tenant(ctx, t.ID, func(tx pgx.Tx) error {
+		if in.Fees != nil {
+			fees, _ := json.Marshal(in.Fees)
+			if _, err := tx.Exec(ctx, `UPDATE tenants SET settings = jsonb_set(settings, '{fees}', $2::jsonb), updated_at=now() WHERE id=$1`, t.ID, fees); err != nil {
+				return err
+			}
+		}
 		feats, _ := json.Marshal(in.Features)
 		if in.Features == nil {
 			feats = []byte("{}")
@@ -301,7 +331,7 @@ func (s *Service) UpdateTenantSettings(ctx context.Context, t Tenant, in TenantS
 			return err
 		}
 		return s.audit(ctx, tx, AuditEntry{TenantID: &t.ID, Action: "tenant.settings.update", TargetType: "tenant", TargetID: t.ID.String(),
-			Metadata: map[string]any{"features": in.Features, "allowed_origins": in.AllowedOrigins}})
+			Metadata: map[string]any{"features": in.Features, "allowed_origins": in.AllowedOrigins, "fees": in.Fees}})
 	})
 	if err != nil {
 		return t, err

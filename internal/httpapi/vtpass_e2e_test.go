@@ -20,6 +20,7 @@ type fakeAggregator struct {
 	settled map[string]string // request_id -> response body for requery
 	pays    int
 	repeat  bool // like the real VTpass sandbox: same token every time
+	amounts []float64 // naira amount of each pay request
 }
 
 func (f *fakeAggregator) handler(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +40,7 @@ func (f *fakeAggregator) handler(w http.ResponseWriter, r *http.Request) {
 	case "/api/pay":
 		id := b["request_id"].(string)
 		f.pays++
+		f.amounts = append(f.amounts, b["amount"].(float64))
 		tok := fmt.Sprintf("1234 5678 9012 3456 %04d", f.pays)
 		if f.repeat {
 			tok = "2636 2054 4059 8275 7802"

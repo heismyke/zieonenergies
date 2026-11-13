@@ -284,3 +284,41 @@ type namedPay struct {
 }
 
 func (n *namedPay) Name() string { return n.name }
+
+// Convenience fees by payment method: added on top of the amount, shown in the
+// public catalogue, and never taken from the electricity the DisCo vends.
+func TestPaymentMethodFees(t *testing.T) {
+	e := newEnv(t, false)
+	agg := &fakeAggregator{settled: map[string]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(agg.handler))
+	defer srv.Close()
+	e.svc.Vending["vtpass"] = vending.NewVTpass(srv.URL+"/sandbox", "AK", "PK", "SK", "08011111111")
+	p := e.provision("zen", nil, nil)
+	e.must(e.do("PATCH", "/v1/admin/settings", p.Admin, map[string]any{"fees": map[string]int64{"checkout_kobo": 15000, "wallet_kobo": 5000}}), 200)
+	e.must(e.do("PATCH", "/v1/admin/settings", p.Admin, map[string]any{"fees": map[string]int64{"checkout_kobo": 200000}}), 400)
+
+	d := e.must(e.do("GET", "/v1/public/discos", "", nil, tenantHdr("zen")), 200).list("discos")[0].(map[string]any)
+	if d["checkout_fee_kobo"] != float64(15000) || d["wallet_fee_kobo"] != float64(5000) {
+		t.Fatalf("catalogue fees: %v", d)
+	}
+
+	c := e.customer(p.Slug, "fees@example.com")
+	e.fund(c, 1000000)
+	o := e.must(e.do("POST", "/v1/orders", c.Token, map[string]any{"provider_code": "IKEDC", "meter_number": "1111111111111",
+		"amount_kobo": 500000, "payment_method": "wallet"}, idem(uuid.NewString())), 201)
+	if o.str("status") != "vended" || o.num("amount_kobo") != 505000 || o.num("fee_kobo") != 5000 {
+		t.Fatalf("wallet order with fee: %s", o.Raw)
+	}
+	if got := e.walletKobo(c); got != 1000000-505000 {
+		t.Fatalf("wallet pays amount + fee: %v", got)
+	}
+	if len(agg.amounts) != 1 || agg.amounts[0] != 5000 {
+		t.Fatalf("the DisCo gets the full ₦5,000: %v", agg.amounts)
+	}
+
+	co := e.must(e.do("POST", "/v1/orders", c.Token, map[string]any{"provider_code": "IKEDC", "meter_number": "1111111111111",
+		"amount_kobo": 500000, "payment_method": "checkout"}, idem(uuid.NewString())), 201)
+	if co.num("amount_kobo") != 515000 || co.num("fee_kobo") != 15000 {
+		t.Fatalf("checkout order with fee: %s", co.Raw)
+	}
+}

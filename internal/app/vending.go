@@ -82,13 +82,15 @@ type Quote struct {
 }
 
 // computeQuote splits a gross amount into fee, VAT and energy value. Rewards
-// and discounts never change this: they are separate funding legs.
-func computeQuote(t Tariff, amount int64) (Quote, error) {
+// and discounts never change this: they are separate funding legs. The
+// tariff's service fee comes out of amount; surcharge (the payment-method fee)
+// is added on top, so the quote's AmountKobo is what the customer pays.
+func computeQuote(t Tariff, amount, surcharge int64) (Quote, error) {
 	if amount < t.MinPurchaseKobo || amount > t.MaxPurchaseKobo {
 		return Quote{}, errf(http.StatusBadRequest, "invalid_amount", "amount must be between %d and %d kobo", t.MinPurchaseKobo, t.MaxPurchaseKobo)
 	}
-	q := Quote{ProviderCode: t.ProviderCode, AmountKobo: amount, FeeKobo: t.ServiceFeeKobo, RateKoboPerKwh: t.RateKoboPerKwh}
-	net := amount - q.FeeKobo
+	q := Quote{ProviderCode: t.ProviderCode, AmountKobo: amount + surcharge, FeeKobo: t.ServiceFeeKobo + surcharge, RateKoboPerKwh: t.RateKoboPerKwh}
+	net := amount - t.ServiceFeeKobo
 	if net <= 0 {
 		return Quote{}, errf(http.StatusBadRequest, "invalid_amount", "amount does not cover the service fee")
 	}
@@ -158,7 +160,7 @@ func (s *Service) Quote(ctx context.Context, p auth.Principal, providerCode stri
 			net := energy + (energy*int64(t.VatBps)+9999)/10000
 			amountKobo = net + t.ServiceFeeKobo
 		}
-		q, err = computeQuote(t, amountKobo)
+		q, err = computeQuote(t, amountKobo, 0)
 		return err
 	})
 	return q, err
@@ -322,7 +324,7 @@ func (s *Service) purchaseWithHook(ctx context.Context, p auth.Principal, t Tena
 		if m.Ownership == "external" {
 			s.withDiscoLimits(ctx, &tariff)
 		}
-		q, err := computeQuote(tariff, in.AmountKobo)
+		q, err := computeQuote(tariff, in.AmountKobo, t.MethodFee(in.PaymentMethod))
 		if err != nil {
 			return err
 		}
@@ -332,9 +334,9 @@ func (s *Service) purchaseWithHook(ctx context.Context, p auth.Principal, t Tena
 			if err != nil {
 				return err
 			}
-			rewardKobo = min(avail, in.AmountKobo)
+			rewardKobo = min(avail, q.AmountKobo)
 		}
-		rest := in.AmountKobo - rewardKobo
+		rest := q.AmountKobo - rewardKobo
 		walletKobo, externalKobo := int64(0), int64(0)
 		if in.PaymentMethod == "wallet" {
 			walletKobo = rest
@@ -356,7 +358,7 @@ func (s *Service) purchaseWithHook(ctx context.Context, p auth.Principal, t Tena
 		err = tx.QueryRow(ctx, `INSERT INTO vend_transactions (tenant_id, user_id, meter_id, status, route, provider, payment_method,
 			amount_kobo, wallet_kobo, reward_kobo, external_kobo, fee_kobo, vat_kobo, energy_value_kobo, rate_kobo_per_kwh, energy_wh, sandbox, source)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
-			p.TenantID, p.UserID, m.ID, status, route, vp.Name(), in.PaymentMethod, in.AmountKobo, walletKobo, rewardKobo, externalKobo,
+			p.TenantID, p.UserID, m.ID, status, route, vp.Name(), in.PaymentMethod, q.AmountKobo, walletKobo, rewardKobo, externalKobo,
 			q.FeeKobo, q.VatKobo, q.EnergyValueKobo, q.RateKoboPerKwh, q.energyWh, vp.Sandbox(), source).Scan(&txnID)
 		if err != nil {
 			return err
