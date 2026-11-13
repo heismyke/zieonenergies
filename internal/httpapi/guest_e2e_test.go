@@ -424,6 +424,14 @@ func TestTokenByEmailAndSMS(t *testing.T) {
 	if me := e.must(e.do("GET", "/v1/me", c.Token, nil), 200); me.str("user", "phone") == "" {
 		t.Fatalf("phone not saved: %s", me.Raw)
 	}
+	// Email goes out for every purchase, even when the buyer did not ask.
+	e.must(order(nil), 201)
+	if err := e.svc.DeliverTokenMessages(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(mail.sent) != 2 || len(sms.sent) != 1 {
+		t.Fatalf("default email: %d emails, %d sms", len(mail.sent), len(sms.sent))
+	}
 }
 
 // A shared token link shows the order without using it up; the first reveal

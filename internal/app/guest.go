@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/heismyke/zieonenergies/internal/auth"
+	"github.com/heismyke/zieonenergies/internal/messaging"
 	"github.com/heismyke/zieonenergies/internal/secure"
 	"github.com/heismyke/zieonenergies/internal/vending"
 )
@@ -262,7 +263,10 @@ func (s *Service) CreateOrder(ctx context.Context, p auth.Principal, t Tenant, i
 	ret := in.ReturnURL
 	pu, err := s.purchaseWithHook(ctx, p, t, PurchaseInput{MeterID: meterID, AmountKobo: in.AmountKobo, PaymentMethod: in.PaymentMethod},
 		func(ctx context.Context, tx pgx.Tx, vendID uuid.UUID) (string, error) {
-			if err := queueTokenMessages(ctx, tx, t.ID, p.UserID, vendID, in.DeliverTo); err != nil {
+			// Every purchase is emailed to the account; SMS and WhatsApp are opt-in.
+			d := in.DeliverTo
+			d.Email = s.Messengers[messaging.Email] != nil
+			if err := queueTokenMessages(ctx, tx, t.ID, p.UserID, vendID, d); err != nil {
 				return "", err
 			}
 			if ret == "" {
