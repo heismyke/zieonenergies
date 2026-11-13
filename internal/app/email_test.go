@@ -15,7 +15,7 @@ func TestTokenEmailRenders(t *testing.T) {
 		meter: "1111111111111", disco: "Ikeja Electricity", brand: "Zenerlink", customer: "ADA OKAFOR", method: "card",
 		createdAt: time.Date(2026, 11, 13, 19, 16, 0, 0, time.UTC), accent: "#C8823A", support: "support@zieonenergies.com"}
 	msg := renderTokenMessage(m, "26362054405982757802", "https://www.zenerlink.com")
-	for _, want := range []string{"2636-2054-4059-8275-7802", "₦2,150", "https://www.zenerlink.com/order/22cf449b-", "icon-192.png", "#C8823A"} {
+	for _, want := range []string{"2636-2054-4059-8275-7802", "₦2,150", "8275", "https://www.zenerlink.com/order/22cf449b-", "icon-192.png", "#C8823A"} {
 		if !strings.Contains(msg.HTML, want) {
 			t.Fatalf("email html missing %q", want)
 		}

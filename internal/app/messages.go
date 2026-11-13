@@ -224,7 +224,7 @@ func renderTokenMessage(m tokenMessage, token, site string) messaging.Message {
 			brand, m.disco, m.meter, tok, kwh, nairaStr(m.amount-m.fee), ref)}
 	}
 
-	e := tokenEmail{Brand: strings.ToUpper(brand), Logo: m.logo, Accent: m.accent, Support: m.support, SiteURL: site}
+	e := tokenEmail{Brand: strings.ToUpper(brand), BrandName: brand, Logo: m.logo, Accent: m.accent, Support: m.support, SiteURL: site}
 	if e.Logo == "" && site != "" && brand == "Zenerlink" {
 		e.Logo = site + "/icon-192.png"
 	}
@@ -232,37 +232,29 @@ func renderTokenMessage(m tokenMessage, token, site string) messaging.Message {
 		e.ReceiptURL = site + "/order/" + m.vend.String()
 		e.TermsURL, e.PrivacyURL = site+"/terms", site+"/privacy"
 	}
-	paid := "Card"
+	e.Paid = "Card"
 	if m.method == "wallet" {
-		paid = "Wallet"
+		e.Paid = "Wallet"
 	}
-	e.Rows = [][2]string{{"Date", m.createdAt.In(lagos).Format("2 Jan 2006, 3:04 PM")}}
-	if m.customer != "" {
-		e.Rows = append(e.Rows, [2]string{"Name", m.customer})
-	}
-	e.Rows = append(e.Rows, [2]string{"Meter", m.meter}, [2]string{"DisCo", m.disco})
-	if token != "" {
-		e.Rows = append(e.Rows, [2]string{"Units", kwh})
-	}
-	e.Rows = append(e.Rows, [2]string{"Electricity", naira})
+	e.Meter, e.Disco, e.Name, e.Ref = m.meter, m.disco, m.customer, ref
+	e.Date = m.createdAt.In(lagos).Format("2 Jan 2006, 3:04 PM")
+	e.Kwh = fmt.Sprintf("%.1f", WhToKwh(m.energyWh))
+	e.Electricity = naira
 	if m.fee > 0 {
-		e.Rows = append(e.Rows, [2]string{"Service fee", "₦" + nairaStr(m.fee)})
+		e.Fee = "₦" + nairaStr(m.fee)
 	}
-	e.Rows = append(e.Rows, [2]string{"Paid with", paid}, [2]string{"Reference", ref})
 	e.Total = "₦" + nairaStr(m.amount)
 
 	var subject, text string
 	if token == "" {
 		// Postpaid: the bill is paid, there is no token.
 		e.Headline = fmt.Sprintf("%s bill paid", naira)
-		e.Sub = fmt.Sprintf("%s · meter %s", m.disco, m.meter)
 		e.Preheader = fmt.Sprintf("Your %s bill payment for meter %s was received.", m.disco, m.meter)
 		subject = fmt.Sprintf("%s bill paid: %s", m.disco, naira)
 		text = fmt.Sprintf("Your %s bill payment of %s for meter %s was received.\n\nReference: %s\n\n%s", m.disco, naira, m.meter, ref, brand)
 	} else {
 		e.Token = tok
-		e.Headline = fmt.Sprintf("%s of %s", naira, m.disco)
-		e.Sub = fmt.Sprintf("%s for meter %s", kwh, m.meter)
+		e.Headline = fmt.Sprintf("%s loaded: %s", kwh, m.disco)
 		e.Preheader = fmt.Sprintf("Token %s · %s for meter %s", tok, kwh, m.meter)
 		subject = fmt.Sprintf("Your %s token: %s", m.disco, tok)
 		text = fmt.Sprintf("Your %s token\n\n%s\n\nMeter: %s\nUnits: %s\nAmount: %s\nTotal paid: %s\nReference: %s\n\nType the 20 digits on your meter keypad and press Enter.\n\n%s",
