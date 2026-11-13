@@ -68,6 +68,20 @@ type PublicMeter struct {
 	Message      string `json:"message,omitempty"`
 }
 
+// Subscribe records an email-updates sign-up from the tenant's public site.
+// Signing up twice is fine, and re-subscribes an address that opted out.
+func (s *Service) Subscribe(ctx context.Context, t Tenant, email string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if err := validateEmail(email); err != nil {
+		return err
+	}
+	return s.DB.Tenant(ctx, t.ID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO subscribers (tenant_id, email) VALUES ($1,$2)
+			ON CONFLICT (tenant_id, email) DO UPDATE SET unsubscribed_at = NULL`, t.ID, email)
+		return err
+	})
+}
+
 // VerifyPublicMeter checks a DisCo meter before the buyer pays.
 func (s *Service) VerifyPublicMeter(ctx context.Context, t Tenant, providerCode, meterNumber, meterType string) (PublicMeter, error) {
 	if !t.Enabled("guest_checkout") {

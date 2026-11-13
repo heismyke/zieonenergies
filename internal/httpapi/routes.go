@@ -34,6 +34,7 @@ func (s *Server) routes() {
 
 	// Public guest checkout ("buy electricity" without an account).
 	s.handle("GET /v1/public/discos", s.publicDiscos)
+	s.handle("POST /v1/public/subscribe", s.publicSubscribe)
 	s.handle("POST /v1/public/meters/verify", s.publicVerifyMeter)
 	s.handle("POST /v1/public/orders", s.publicCreateOrder)
 	s.handle("GET /v1/public/orders/{id}", s.publicGetOrder)
@@ -171,6 +172,27 @@ func (s *Server) getBranding(w http.ResponseWriter, r *http.Request) error {
 	}
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	return writeJSON(w, 200, b)
+}
+
+func (s *Server) publicSubscribe(w http.ResponseWriter, r *http.Request) error {
+	if !s.authLimiter.Allow("subscribe:" + app.Meta(r.Context()).IP) {
+		return tooMany()
+	}
+	var in struct {
+		Email string `json:"email"`
+	}
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	t, err := s.publicTenant(r)
+	if err != nil {
+		return err
+	}
+	if err := s.svc.Subscribe(r.Context(), t, in.Email); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) error {

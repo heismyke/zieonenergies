@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/heismyke/zieonenergies/internal/payments"
 	"github.com/heismyke/zieonenergies/internal/vending"
@@ -320,5 +321,22 @@ func TestPaymentMethodFees(t *testing.T) {
 		"amount_kobo": 500000, "payment_method": "checkout"}, idem(uuid.NewString())), 201)
 	if co.num("amount_kobo") != 515000 || co.num("fee_kobo") != 15000 {
 		t.Fatalf("checkout order with fee: %s", co.Raw)
+	}
+}
+
+func TestSubscribe(t *testing.T) {
+	e := newEnv(t, false)
+	e.provision("zen", nil, nil)
+	sub := func(email string) resp {
+		return e.do("POST", "/v1/public/subscribe", "", map[string]string{"email": email}, tenantHdr("zen"))
+	}
+	e.must(sub("Reader@Example.com"), 204)
+	e.must(sub("reader@example.com"), 204) // twice is fine
+	e.must(sub("not-an-email"), 400)
+	var n int
+	if err := e.svc.DB.System(context.Background(), func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(), `SELECT count(*) FROM subscribers WHERE email='reader@example.com'`).Scan(&n)
+	}); err != nil || n != 1 {
+		t.Fatalf("one subscriber row: %d %v", n, err)
 	}
 }

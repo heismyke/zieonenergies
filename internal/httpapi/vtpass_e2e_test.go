@@ -19,7 +19,7 @@ type fakeAggregator struct {
 	mu      sync.Mutex
 	settled map[string]string // request_id -> response body for requery
 	pays    int
-	repeat  bool // like the real VTpass sandbox: same token every time
+	repeat  bool      // like the real VTpass sandbox: same token every time
 	amounts []float64 // naira amount of each pay request
 }
 
