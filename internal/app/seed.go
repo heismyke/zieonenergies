@@ -36,7 +36,7 @@ func (s *Service) SeedPilot(ctx context.Context) (SeedResult, error) {
 	str := func(v string) *string { return &v }
 	specs := []spec{
 		{in: ProvisionInput{Slug: "zenerlink", Name: "Zieon Energies", IsPlatform: true,
-			Branding: BrandingInput{DisplayName: str("Zenerlink"), SupportEmail: str("support@zieonenergies.com"), Subdomain: str("app")},
+			Branding: BrandingInput{DisplayName: str("Zenerlink"), SupportEmail: str("support@zenerlink.com"), Subdomain: str("app")},
 			Features: map[string]bool{"benefits": false}, AllowedOrigins: []string{"http://localhost:5173", "https://zenerlink.vercel.app"}},
 			customers: []string{"demo@zenerlink.app"}, meters: []string{"11111111111", "33333333333", "44444444444"}},
 		{in: ProvisionInput{Slug: "pce-energy", Name: "PCE Energy",
