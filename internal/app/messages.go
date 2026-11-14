@@ -86,7 +86,7 @@ type tokenMessage struct {
 	customer, method      string
 	createdAt             time.Time
 	logo, accent, support string
-	domain                string
+	domain, buyer         string
 	sandbox               bool
 }
 
@@ -99,10 +99,11 @@ func (s *Service) DeliverTokenMessages(ctx context.Context) error {
 				v.status, v.amount_kobo, v.fee_kobo, v.energy_wh, m.meter_number,
 				coalesce(t.provider_name, m.provider_code), coalesce(b.display_name, ''), et.token_enc,
 				m.customer_name, v.payment_method, v.created_at, coalesce(b.logo_url, ''), coalesce(b.theme->>'primary', ''),
-				coalesce(b.support_email, ''), coalesce(b.custom_domain, ''), v.sandbox
+				coalesce(b.support_email, ''), coalesce(b.custom_domain, ''), v.sandbox, coalesce(u.name, '')
 			FROM outbound_messages o
 			JOIN vend_transactions v ON v.id = o.vend_transaction_id
 			JOIN meters m ON m.id = v.meter_id
+			LEFT JOIN users u ON u.id = v.user_id
 			LEFT JOIN tariffs t ON t.tenant_id = o.tenant_id AND t.provider_code = m.provider_code
 			LEFT JOIN tenant_branding b ON b.tenant_id = o.tenant_id
 			LEFT JOIN energy_tokens et ON et.vend_transaction_id = v.id
@@ -116,7 +117,7 @@ func (s *Service) DeliverTokenMessages(ctx context.Context) error {
 			var m tokenMessage
 			if err := rows.Scan(&m.id, &m.tenant, &m.vend, &m.channel, &m.to, &m.attempts, &m.status, &m.amount, &m.fee,
 				&m.energyWh, &m.meter, &m.disco, &m.brand, &m.tokenEnc,
-				&m.customer, &m.method, &m.createdAt, &m.logo, &m.accent, &m.support, &m.domain, &m.sandbox); err != nil {
+				&m.customer, &m.method, &m.createdAt, &m.logo, &m.accent, &m.support, &m.domain, &m.sandbox, &m.buyer); err != nil {
 				rows.Close()
 				return err
 			}
@@ -233,6 +234,10 @@ func renderTokenMessage(m tokenMessage, token, site string) messaging.Message {
 		e.Paid = "Wallet"
 	}
 	e.Meter, e.Disco, e.Name, e.Ref = m.meter, m.disco, m.customer, ref
+	e.Hello = "Hello,"
+	if first := strings.Fields(m.buyer); len(first) > 0 {
+		e.Hello = "Hello " + first[0] + ","
+	}
 	e.Date = m.createdAt.In(lagos).Format("2 Jan 2006, 3:04 PM")
 	e.Kwh = fmt.Sprintf("%.1f", WhToKwh(m.energyWh))
 	e.Electricity = naira
@@ -244,13 +249,13 @@ func renderTokenMessage(m tokenMessage, token, site string) messaging.Message {
 	var subject, text string
 	if token == "" {
 		// Postpaid: the bill is paid, there is no token.
-		e.Headline = fmt.Sprintf("%s bill paid", naira)
+		e.Headline = fmt.Sprintf("Your %s bill payment was successful", naira)
 		e.Preheader = fmt.Sprintf("Your %s bill payment for meter %s was received.", m.disco, m.meter)
 		subject = fmt.Sprintf("%s bill paid: %s", m.disco, naira)
 		text = fmt.Sprintf("Your %s bill payment of %s for meter %s was received.\n\nReference: %s\n\n%s", m.disco, naira, m.meter, ref, brand)
 	} else {
 		e.Token = tok
-		e.Headline = fmt.Sprintf("%s loaded: %s", kwh, m.disco)
+		e.Headline = "Your electricity token is ready"
 		e.Preheader = fmt.Sprintf("Token %s · %s for meter %s", tok, kwh, m.meter)
 		subject = fmt.Sprintf("Your %s token: %s", m.disco, tok)
 		text = fmt.Sprintf("Your %s token\n\n%s\n\nMeter: %s\nUnits: %s\nAmount: %s\nTotal paid: %s\nReference: %s\n\nType the 20 digits on your meter keypad and press Enter.\n\n%s",

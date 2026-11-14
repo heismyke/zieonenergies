@@ -523,7 +523,7 @@ func TestForgotPassword(t *testing.T) {
 	e.must(e.do("POST", "/v1/auth/forgot-password", "", map[string]string{"email": "nobody@example.com"}, tenantHdr(p.Slug)), 200)
 	e.must(e.do("POST", "/v1/auth/forgot-password", "", map[string]string{"email": " forget@example.com "}, tenantHdr(p.Slug)), 200)
 	m := sent(1)[0]
-	if len(mail.sent) != 1 || m.To != "forget@example.com" || !strings.Contains(m.HTML, "Hi Ada,") {
+	if len(mail.sent) != 1 || m.To != "forget@example.com" || !strings.Contains(m.HTML, "Hello Ada,") {
 		t.Fatalf("reset email: %+v", mail.sent)
 	}
 	i := strings.Index(m.Text, "/reset-password?code=")

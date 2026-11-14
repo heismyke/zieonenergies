@@ -147,9 +147,9 @@ func renderResetMessage(b brandInfo, site, email, name, code string) messaging.M
 		logo = site + "/icon-192.png"
 	}
 	link := site + "/reset-password?code=" + url.QueryEscape(code)
-	hello := "Hi,"
+	hello := "Hello,"
 	if first := strings.Fields(name); len(first) > 0 {
-		hello = "Hi " + first[0] + ","
+		hello = "Hello " + first[0] + ","
 	}
 	text := fmt.Sprintf("%s\n\nWe got a request to reset the password for your %s account (%s).\n\nSet a new password here (the link works once and expires in 30 minutes):\n%s\n\nIf you didn't ask for this, ignore this email. Your password stays the same.\n\n%s",
 		hello, brand, email, link, brand)

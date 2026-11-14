@@ -6,15 +6,15 @@ import (
 	"strings"
 )
 
-// Customer emails: a light page with the logo on top, a dark brand panel for
-// the headline, a details table and a short footer. Table layout and inline
-// styles only, since Gmail and Outlook drop most CSS; the one <style> rule
-// only tightens spacing on phones.
+// Customer emails: a dark header with the logo, a white card with a greeting,
+// a bold headline, a soft details panel and a short "why you got this" note.
+// Table layout and inline styles only, since Gmail and Outlook drop most CSS;
+// the one <style> rule only tightens spacing on phones.
 
 // tokenEmail is the data for the token receipt email.
 type tokenEmail struct {
 	Brand, BrandName, Logo, Accent string
-	Preheader, Headline            string
+	Preheader, Headline, Hello     string
 	Sandbox                        bool
 	Token                          string // grouped; empty for postpaid
 	Kwh                            string // "79.9"
@@ -31,96 +31,117 @@ type tokenEmail struct {
 type resetEmail struct {
 	Brand, BrandName, Logo, Accent string
 	Hello, Email, Link             string
+	Sandbox                        bool // always false; the shared header reads it
 	Support, SiteURL, SiteHost     string
 }
 
 const emailHead = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>{{.Preheader}}</title>
-<style>@media (max-width:480px){.pad{padding-left:20px!important;padding-right:20px!important}.big{font-size:24px!important}.tok{font-size:19px!important;letter-spacing:0!important}}</style></head>
-<body style="margin:0;padding:0;background:#f3f2ef;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#f3f2ef;">{{.Preheader}}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f2ef;">
-<tr><td align="center" style="padding:32px 12px 40px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;font-family:Helvetica,Arial,sans-serif;color:#1a1a1a;">
-<tr><td align="center" style="padding:0 16px 22px;">
-  {{if .Logo}}<img src="{{.Logo}}" width="44" height="44" alt="{{.BrandName}}" style="display:block;border-radius:11px;border:0;">{{else}}<span style="font-size:16px;font-weight:bold;letter-spacing:4px;">{{.Brand}}</span>{{end}}
-  <p style="margin:14px 0 0;font-size:13px;line-height:1.5;color:#6b6b6b;">{{.Intro}}</p>
+<style>@media (max-width:480px){.pad{padding-left:22px!important;padding-right:22px!important}.big{font-size:23px!important}.tok{font-size:19px!important;letter-spacing:0!important}}</style></head>
+<body style="margin:0;padding:0;background:#f3f4f6;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#f3f4f6;">{{.Preheader}}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f4f6;">
+<tr><td align="center" style="padding:28px 10px 40px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:580px;font-family:Helvetica,Arial,sans-serif;color:#111827;">
+<tr><td class="pad" style="background:#0b0b0b;border-radius:14px 14px 0 0;padding:26px 40px;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+    {{if .Logo}}<td style="padding-right:12px;"><img src="{{.Logo}}" width="40" height="40" alt="" style="display:block;border-radius:10px;border:0;"></td>{{end}}
+    <td style="font-size:24px;font-weight:bold;letter-spacing:-0.5px;color:#ffffff;">{{.BrandName}}</td>
+  </tr></table>
 </td></tr>
-<tr><td style="background:#ffffff;border:1px solid #e6e4df;">
+{{if .Sandbox}}<tr><td class="pad" style="background:#fff4e5;padding:12px 40px;font-size:13px;color:#8a4b00;"><b>Test purchase.</b> This token will not work on a real meter.</td></tr>{{end}}
+<tr><td style="background:#ffffff;border-radius:0 0 14px 14px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">`
 
 const emailFoot = `  </table>
 </td></tr>
-<tr><td align="center" style="padding:24px 16px 0;font-size:12px;line-height:1.7;color:#8a8a8a;">
+<tr><td align="center" style="padding:22px 16px 0;font-size:12px;line-height:1.7;color:#9ca3af;">
   {{.Footer}}
 </td></tr>
 </table>
 </td></tr></table>
 </body></html>`
 
-const emailSignoff = `
-  <tr><td align="center" style="padding:24px 32px 30px;"><div style="width:40px;border-top:1px solid #dddddd;font-size:0;line-height:0;">&nbsp;</div>
-    <p style="margin:18px 0 0;font-size:15px;color:#444444;">{{.BrandName}}</p>
-    {{if .Support}}<p style="margin:4px 0 0;font-size:14px;"><a href="mailto:{{.Support}}" style="color:{{.Accent}};">{{.Support}}</a></p>{{end}}
-  </td></tr>
-`
-
-const detailRow = `<tr><td style="padding:13px 0;border-bottom:1px solid #eeeeee;color:#6b6b6b;">%s</td><td align="right" style="padding:13px 0;border-bottom:1px solid #eeeeee;font-weight:bold;color:#333333;">%s</td></tr>`
+// detailRow is one line of the details panel.
+const detailRow = `<tr><td style="padding:16px 0;border-bottom:1px solid #dde3ec;font-weight:bold;color:#111827;">%s</td><td align="right" style="padding:16px 0 16px 12px;border-bottom:1px solid #dde3ec;color:#374151;">%s</td></tr>`
 
 func row(label, value string) string {
 	return strings.Replace(strings.Replace(detailRow, "%s", label, 1), "%s", value, 1)
 }
 
-var tokenEmailTmpl = template.Must(template.New("token").Parse(emailHead + `
-  {{if .Sandbox}}<tr><td align="center" style="background:#d9534f;padding:13px 20px;font-size:13px;color:#ffffff;">Test purchase. This token will not work on a real meter.</td></tr>{{end}}
-  <tr><td class="pad" align="center" style="background:#111111;padding:34px 32px 32px;">
-    <p style="margin:0;font-size:15px;line-height:1.5;color:#d6d6d6;">{{if .Token}}Your {{.Disco}} token{{else}}Your {{.Disco}} bill payment of{{end}}</p>
-    {{if .Token}}
-    <p class="tok" style="margin:14px 0 0;white-space:nowrap;font-family:'Courier New',Courier,monospace;font-size:30px;line-height:1.2;font-weight:bold;letter-spacing:1px;color:{{.Accent}};">{{.Token}}</p>
-    <p style="margin:12px 0 0;font-size:14px;color:#9a9a9a;">{{.Kwh}} kWh &middot; meter {{.Meter}}</p>
-    {{else}}
-    <p class="big" style="margin:12px 0 0;font-size:34px;font-weight:bold;color:#ffffff;">{{.Electricity}}</p>
-    <p style="margin:10px 0 0;font-size:14px;color:#9a9a9a;">was received for meter {{.Meter}}</p>
-    {{end}}
+const lastRow = `<tr><td style="padding:16px 0 4px;font-weight:bold;color:#111827;">%s</td><td align="right" style="padding:16px 0 4px 12px;font-size:17px;font-weight:bold;color:#111827;">%s</td></tr>`
+
+func last(label, value string) string {
+	return strings.Replace(strings.Replace(lastRow, "%s", label, 1), "%s", value, 1)
+}
+
+// button is a dark call-to-action; a table cell so Outlook keeps the padding.
+func button(href, text string) string {
+	return `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#0b0b0b;border-radius:8px;">
+      <a href="` + href + `" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;">` + text + `</a></td></tr></table>`
+}
+
+const emailWhy = `
+  <tr><td class="pad" style="padding:32px 40px 36px;font-size:14px;line-height:1.65;color:#4b5563;">
+    <p style="margin:0 0 8px;font-weight:bold;color:#111827;">Why did I receive this email?</p>
+    <p style="margin:0;">{{.Why}}</p>
+    <p style="margin:12px 0 0;">Need help? {{if .Support}}Reply to this email or write to <a href="mailto:{{.Support}}" style="color:#111827;">{{.Support}}</a>.{{else}}Reply to this email.{{end}}</p>
+    <p style="margin:20px 0 0;color:#111827;">&mdash; {{.BrandName}}</p>
   </td></tr>
-  {{if .Token}}<tr><td class="pad" align="center" style="padding:16px 32px;background:#faf6f0;border-bottom:1px solid #efe9df;font-size:13px;color:#6b5a45;">Type the 20 digits on your meter keypad, then press <b>Enter</b>.</td></tr>{{end}}
-  <tr><td class="pad" style="padding:30px 32px 8px;">
-    <p style="margin:0 0 14px;font-size:17px;font-weight:bold;color:#333333;" align="center">Transaction details</p>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:14px;">
-      ` + row("Reference", "{{.Ref}}") + `
-      ` + row("Date", "{{.Date}}") + `
-      ` + row("Electricity company", "{{.Disco}}") + `
-      ` + row("Meter", "{{.Meter}}") + `
-      {{if .Name}}` + row("Account name", "{{.Name}}") + `{{end}}
-      {{if .Token}}` + row("Units", "{{.Kwh}} kWh") + `{{end}}
-      ` + row("Electricity", "{{.Electricity}}") + `
-      {{if .Fee}}` + row("Service fee", "{{.Fee}}") + `{{end}}
-      ` + row("Paid with", "{{.Paid}}") + `
-      <tr><td style="padding:16px 0 0;font-weight:bold;color:#1a1a1a;">Total paid</td><td align="right" style="padding:16px 0 0;font-size:19px;font-weight:bold;color:#1a1a1a;">{{.Total}}</td></tr>
+`
+
+var tokenEmailTmpl = template.Must(template.New("token").Parse(emailHead + `
+  <tr><td class="pad" style="padding:34px 40px 0;">
+    <p style="margin:0;font-size:16px;color:#374151;">{{.Hello}}</p>
+    <p class="big" style="margin:14px 0 0;font-size:27px;line-height:1.25;font-weight:bold;color:#111827;">{{.Headline}}</p>
+    <p style="margin:12px 0 0;font-size:16px;line-height:1.55;color:#374151;">{{if .Token}}Here is your {{.Disco}} token for meter <b>{{.Meter}}</b>.{{else}}Your {{.Disco}} bill payment for meter <b>{{.Meter}}</b> was received.{{end}}</p>
+  </td></tr>
+  {{if .Token}}<tr><td class="pad" style="padding:22px 40px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0b0b0b;border-radius:12px;">
+      <tr><td align="center" style="padding:24px 16px 22px;">
+        <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:2px;color:#9ca3af;">YOUR TOKEN</p>
+        <p class="tok" style="margin:10px 0 0;white-space:nowrap;font-family:'Courier New',Courier,monospace;font-size:28px;line-height:1.2;font-weight:bold;letter-spacing:1px;color:{{.Accent}};">{{.Token}}</p>
+        <p style="margin:10px 0 0;font-size:14px;color:#d1d5db;">{{.Kwh}} kWh</p>
+      </td></tr>
+    </table>
+    <p style="margin:12px 0 0;font-size:14px;line-height:1.5;color:#6b7280;">Type the 20 digits on your meter keypad, then press <b>Enter</b>.</p>
+  </td></tr>{{end}}
+  <tr><td class="pad" style="padding:28px 40px 0;">
+    <p style="margin:0 0 14px;font-size:16px;color:#374151;">The details are shown below:</p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f1f4f9;border-radius:12px;">
+      <tr><td style="padding:6px 26px 14px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:15px;">
+          ` + row("Electricity company", "{{.Disco}}") + `
+          ` + row("Meter number", "{{.Meter}}") + `
+          {{if .Name}}` + row("Account name", "{{.Name}}") + `{{end}}
+          {{if .Token}}` + row("Units", "{{.Kwh}} kWh") + `{{end}}
+          ` + row("Amount", "{{.Electricity}}") + `
+          {{if .Fee}}` + row("Service fee", "{{.Fee}}") + `{{end}}
+          ` + row("Paid with", "{{.Paid}}") + `
+          ` + row("Reference", "{{.Ref}}") + `
+          ` + row("Date &amp; time", "{{.Date}}") + `
+          ` + last("Total paid", "{{.Total}}") + `
+        </table>
+      </td></tr>
     </table>
   </td></tr>
-  {{if .ReceiptURL}}<tr><td class="pad" align="center" style="padding:26px 32px 6px;">
-    <a href="{{.ReceiptURL}}" style="display:inline-block;background:#111111;color:#ffffff;text-decoration:none;font-size:14px;font-weight:bold;padding:13px 30px;border-radius:6px;">View receipt</a>
-  </td></tr>{{end}}` + emailSignoff + emailFoot))
+  {{if .ReceiptURL}}<tr><td class="pad" style="padding:28px 40px 0;">` + button("{{.ReceiptURL}}", "View receipt") + `</td></tr>{{end}}` + emailWhy + emailFoot))
 
 var resetEmailTmpl = template.Must(template.New("reset").Parse(emailHead + `
-  <tr><td class="pad" align="center" style="background:#111111;padding:34px 32px 32px;">
-    <p style="margin:0;font-size:15px;color:#d6d6d6;">Password reset</p>
-    <p class="big" style="margin:12px 0 0;font-size:28px;line-height:1.25;font-weight:bold;color:#ffffff;">Set a new password</p>
+  <tr><td class="pad" style="padding:34px 40px 0;">
+    <p style="margin:0;font-size:16px;color:#374151;">{{.Hello}}</p>
+    <p class="big" style="margin:14px 0 0;font-size:27px;line-height:1.25;font-weight:bold;color:#111827;">Reset your password</p>
+    <p style="margin:12px 0 0;font-size:16px;line-height:1.55;color:#374151;">We got a request to reset the password for <b>{{.Email}}</b>. Click the button below to choose a new one.</p>
   </td></tr>
-  <tr><td class="pad" style="padding:30px 32px 0;font-size:15px;line-height:1.6;color:#444444;">
-    <p style="margin:0 0 12px;">{{.Hello}}</p>
-    <p style="margin:0;">We got a request to reset the password for <b>{{.Email}}</b>. Click the button below to choose a new one.</p>
+  <tr><td class="pad" style="padding:26px 40px 0;">` + button("{{.Link}}", "Reset password") + `
+    <p style="margin:12px 0 0;font-size:13px;color:#6b7280;">The link works once and expires in 30 minutes.</p>
   </td></tr>
-  <tr><td class="pad" align="center" style="padding:28px 32px 0;">
-    <a href="{{.Link}}" style="display:inline-block;background:#111111;color:#ffffff;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 34px;border-radius:6px;">Reset password</a>
-    <p style="margin:12px 0 0;font-size:12px;color:#8a8a8a;">The link works once and expires in 30 minutes.</p>
-  </td></tr>
-  <tr><td class="pad" style="padding:26px 32px 0;font-size:13px;line-height:1.6;color:#6b6b6b;">
-    <p style="margin:0;">Didn't ask for this? Ignore this email and your password stays the same.</p>
-    <p style="margin:12px 0 0;word-break:break-all;">Button not working? Paste this link into your browser:<br><a href="{{.Link}}" style="color:#6b6b6b;">{{.Link}}</a></p>
-  </td></tr>` + emailSignoff + emailFoot))
+  <tr><td class="pad" style="padding:24px 40px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f1f4f9;border-radius:12px;">
+      <tr><td style="padding:18px 22px;font-size:13px;line-height:1.6;color:#4b5563;">Button not working? Paste this link into your browser:<br><a href="{{.Link}}" style="color:#374151;word-break:break-all;">{{.Link}}</a></td></tr>
+    </table>
+  </td></tr>` + emailWhy + emailFoot))
 
 // footerLinks is the site link (and Terms/Privacy) under the email.
 func footerLinks(site, terms, privacy string) template.HTML {
@@ -128,7 +149,7 @@ func footerLinks(site, terms, privacy string) template.HTML {
 		return ""
 	}
 	a := func(href, text string) string {
-		return `<a href="` + template.HTMLEscapeString(href) + `" style="color:#8a8a8a;text-decoration:none;">` + template.HTMLEscapeString(text) + `</a>`
+		return `<a href="` + template.HTMLEscapeString(href) + `" style="color:#9ca3af;text-decoration:none;">` + template.HTMLEscapeString(text) + `</a>`
 	}
 	out := a(site, siteHost(site))
 	if terms != "" {
@@ -142,15 +163,12 @@ func renderTokenEmail(e tokenEmail) string {
 		e.Accent = "#C8823A"
 	}
 	e.SiteHost = siteHost(e.SiteURL)
-	intro := "If you have any issue with this purchase, reply to this email"
-	if e.Support != "" {
-		intro += " or write to " + e.Support
-	}
+	why := "You bought electricity on " + e.BrandName + " with this email address. Keep this email: it has your token and receipt."
 	return execEmail(tokenEmailTmpl, struct {
 		tokenEmail
-		Intro  string
+		Why    string
 		Footer template.HTML
-	}{e, intro + ".", footerLinks(e.SiteURL, e.TermsURL, e.PrivacyURL)})
+	}{e, why, footerLinks(e.SiteURL, e.TermsURL, e.PrivacyURL)})
 }
 
 func renderResetEmail(e resetEmail) string {
@@ -160,10 +178,11 @@ func renderResetEmail(e resetEmail) string {
 	e.SiteHost = siteHost(e.SiteURL)
 	return execEmail(resetEmailTmpl, struct {
 		resetEmail
-		Preheader, Intro string
-		Footer           template.HTML
+		Preheader, Why string
+		Footer         template.HTML
 	}{e, "Set a new password for " + e.Email + ". The link expires in 30 minutes.",
-		"You asked to reset your " + e.BrandName + " password.", footerLinks(e.SiteURL, "", "")})
+		"Someone, hopefully you, asked to reset the password for this " + e.BrandName + " account. If it wasn't you, ignore this email and your password stays the same.",
+		footerLinks(e.SiteURL, "", "")})
 }
 
 func siteHost(u string) string {
